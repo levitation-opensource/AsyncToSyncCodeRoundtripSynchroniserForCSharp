@@ -5,9 +5,9 @@ You can also write your code in synchronous format and it will be automatically 
 
 ### Installation
 
-    Copy appsettings.example.json to appsettings.json
-    Update the settings in appsettings.json according to your needs
-    Build the project
-    In the build folder launch AsyncToSyncCodeRoundtripSynchroniserMonitor.bat
+    * Copy appsettings.example.json to appsettings.json
+    * Update the settings in appsettings.json according to your needs
+    * Build the project
+    * In the build folder launch AsyncToSyncCodeRoundtripSynchroniserMonitor.bat
     
     

@@ -2,3 +2,4 @@
 Microsoft.Extensions.Configuration.Json 1.1.2, Microsoft, Microsoft .Net Library License. https://www.nuget.org/packages/Microsoft.Extensions.Configuration.Json/1.1.2
 MyOddWeb.DirectoryWatcher 0.1.8, 2018 Florent Guelfucci, MIT Licence. https://www.nuget.org/packages/MyOddWeb.DirectoryWatcher/0.1.8
 .NET runtime source, .NET Foundation and Contributors, MIT License. https://github.com/dotnet/runtime/blob/5ddc873d9ea6cd4bc6a935fec3057fe89a6932aa/src/libraries/System.IO.FileSystem/src/System/IO/File.cs
+Nito.AsyncEx.Coordination 5.0.0, Stephen Cleary, MIT License. https://www.nuget.org/packages/Nito.AsyncEx.Coordination/

@@ -1,4 +1,12 @@
-﻿#define ASYNC
+﻿//
+// Copyright (c) Roland Pihlakas 2019 - 2020
+// roland@simplify.ee
+//
+// Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
+// See the LICENSE file for more information.
+//
+
+#define ASYNC
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -11,6 +19,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using myoddweb.directorywatcher;
 using myoddweb.directorywatcher.interfaces;
+using Nito.AsyncEx;
 
 namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {

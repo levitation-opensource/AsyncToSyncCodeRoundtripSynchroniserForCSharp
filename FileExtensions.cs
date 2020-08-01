@@ -1,4 +1,10 @@
-﻿#define ASYNC
+﻿//
+// Licensed to Roland Pihlakas under one or more agreements.
+// Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
+// See the LICENSE and copyrights.txt files for more information.
+//
+
+#define ASYNC
 #define MS_IO_REDIST
 using System;
 #if NETSTANDARD
@@ -14,39 +20,6 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
     public static class FileExtensions
     {
-#if false
-        const int BufferSize = 1024 * 1024;
-
-        public static Task<string> ReadAllTextAsync(string path, CancellationToken cancellationToken = default(CancellationToken))
-        {
-            return ReadAllTextAsync(path, Encoding.UTF8, cancellationToken);
-        }
-
-        public static async Task<string> ReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
-        {
-            using (FileStream sourceStream = new FileStream(
-                path,
-                FileMode.Open, FileAccess.Read, FileShare.Read,
-                bufferSize: BufferSize, useAsync: true)
-            )
-            {
-                StringBuilder stringBuilder = new StringBuilder();
-
-                byte[] buffer = new byte[BufferSize];
-                int numRead;
-                while (
-                    (numRead = await sourceStream.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) 
-                    != 0
-                )
-                {
-                    string text = encoding.GetString(buffer, 0, numRead);
-                    stringBuilder.Append(text);
-                }
-
-                return stringBuilder.ToString();
-            }
-        }
-#else
         //adapted from https://github.com/dotnet/runtime/blob/5ddc873d9ea6cd4bc6a935fec3057fe89a6932aa/src/libraries/System.IO.FileSystem/src/System/IO/File.cs
 
         internal const int DefaultBufferSize = 4096;
@@ -200,6 +173,5 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 #endif
             }
         }
-#endif
-            }
-            }
+    }
+}

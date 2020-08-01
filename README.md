@@ -3,7 +3,7 @@ Automatically converts async C# code in one folder to synchronous code in anothe
 
 You can also write your code in synchronous format and it will be automatically converted to async code in the background.
 
-# Installation
+### Installation
 
     Copy appsettings.example.json to appsettings.json
     Update the settings in appsettings.json according to your needs

@@ -9,5 +9,6 @@ You can also write your code in synchronous format and it will be automatically 
     * Update the settings in appsettings.json according to your needs
     * Build the project
     * In the build folder launch AsyncToSyncCodeRoundtripSynchroniserMonitor.bat
-    
-    
+
+
+[![Analytics](https://ga-beacon.appspot.com/UA-351728-28/AsyncToSyncCodeRoundtripSynchroniserForCSharp/README.md?pixel)](https://github.com/igrigorik/ga-beacon)    

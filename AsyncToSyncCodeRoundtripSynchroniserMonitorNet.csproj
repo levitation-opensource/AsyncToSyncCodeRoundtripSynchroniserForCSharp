@@ -23,19 +23,20 @@
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
-    <NoWarn>S125;S1125;S1135;S2589;S3881;S3358;CA1063;CCN0011;CCN0021;CCN0031;1701;1702;AsyncFixed01;MS002;IDE0018;AD0001</NoWarn>
+    <NoWarn>SEC0122;S125;S1125;S1135;S2589;S3881;S3358;CA1063;CCN0011;CCN0021;CCN0031;1701;1702;AsyncFixed01;MS002;IDE0018;AD0001</NoWarn>
     <WarningsAsErrors>NU1605</WarningsAsErrors>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
-    <DebugType>pdbonly</DebugType>
+    <DebugType>full</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
-    <NoWarn>S125;S1125;S1135;S2589;S3881;S3358;CA1063;CCN0011;CCN0021;CCN0031;1701;1702;AsyncFixed01;MS002;IDE0018;AD0001</NoWarn>
+    <NoWarn>SEC0122;S125;S1125;S1135;S2589;S3881;S3358;CA1063;CCN0011;CCN0021;CCN0031;1701;1702;AsyncFixed01;MS002;IDE0018;AD0001</NoWarn>
     <WarningsAsErrors>NU1605</WarningsAsErrors>
+    <DebugSymbols>true</DebugSymbols>
   </PropertyGroup>
   <PropertyGroup>
     <StartupObject>AsyncToSyncCodeRoundtripSynchroniserMonitor.Program</StartupObject>

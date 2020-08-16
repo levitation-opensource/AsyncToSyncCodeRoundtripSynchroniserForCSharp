@@ -50,15 +50,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
         private static readonly Regex TaskDelayReplaceRegex = new Regex(@"Task[.]Delay", RegexOptions.Singleline | RegexOptions.Compiled);
-        private static readonly string TaskDelayReplaceRegexReplacement = @"/*--Task.Delay--*/System.Threading.Thread.Sleep";
+        private const string TaskDelayReplaceRegexReplacement = @"/*--Task.Delay--*/System.Threading.Thread.Sleep";
 
 
         private static readonly Regex TaskReplaceRegex = new Regex(@"(\s+)(async\s+)?Task<([^ (]+)>(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
-        private static readonly string TaskReplaceRegexReplacement = @"$1/*--$2Task<--*/$3/*-->--*/$4";
+        private const string TaskReplaceRegexReplacement = @"$1/*--$2Task<--*/$3/*-->--*/$4";
 
 
         private static readonly Regex AsyncLockReplaceRegex = new Regex(@"using([^(]*)[(]await(\s+[^(]+)[.]LockAsync[(][)][)]", RegexOptions.Singleline | RegexOptions.Compiled);
-        private static readonly string AsyncLockReplaceRegexReplacement = @"/*--using--*/lock$1(/*--await--*/ $2/*--.Lock A s y n c()--*/)";
+        private const string AsyncLockReplaceRegexReplacement = @"/*--using--*/lock$1(/*--await--*/ $2/*--.Lock A s y n c()--*/)";
 
 
         public static async Task AsyncFileUpdated(string fullName, Context context)

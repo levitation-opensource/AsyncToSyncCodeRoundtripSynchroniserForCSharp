@@ -185,7 +185,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         foreach (var fileSystemInfo in new DirectoryInfo(Global.SyncPath)
                                                     .GetFileSystemInfos("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
                         {
-                            await consoleWatch.OnAddedAsync
+                            await ConsoleWatch.OnAddedAsync
                             (
                                 new DummyFileSystemEvent(fileSystemInfo),
                                 new CancellationToken()
@@ -195,7 +195,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         foreach (var fileSystemInfo in new DirectoryInfo(Global.SyncPath)
                                                     .GetFileSystemInfos("*." + Global.WatchedResXExtension, SearchOption.AllDirectories))
                         {
-                            await consoleWatch.OnAddedAsync
+                            await ConsoleWatch.OnAddedAsync
                             (
                                 new DummyFileSystemEvent(fileSystemInfo),
                                 new CancellationToken()
@@ -207,7 +207,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         foreach (var fileSystemInfo in new DirectoryInfo(Global.AsyncPath)
                                                     .GetFileSystemInfos("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
                         {
-                            await consoleWatch.OnAddedAsync
+                            await ConsoleWatch.OnAddedAsync
                             (
                                 new DummyFileSystemEvent(fileSystemInfo),
                                 new CancellationToken()
@@ -217,7 +217,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         foreach (var fileSystemInfo in new DirectoryInfo(Global.AsyncPath)
                                                     .GetFileSystemInfos("*." + Global.WatchedResXExtension, SearchOption.AllDirectories))
                         {
-                            await consoleWatch.OnAddedAsync
+                            await ConsoleWatch.OnAddedAsync
                             (
                                 new DummyFileSystemEvent(fileSystemInfo),
                                 new CancellationToken()
@@ -236,8 +236,14 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     // listen for the Ctrl+C 
                     WaitForCtrlC();
 
+                    Console.WriteLine("Stopping...");
+
                     // stop everything.
                     watch.Stop();
+
+                    Console.WriteLine("Exiting...");
+
+                    GC.KeepAlive(consoleWatch);
                 }
             }
             catch (Exception ex)
@@ -310,7 +316,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         /// We need a static lock so it is shared by all.
         /// </summary>
         private static readonly object Lock = new object();
-        private static readonly AsyncLock AsyncLock = new AsyncLock();  //TODO: use this
+        //private static readonly AsyncLock AsyncLock = new AsyncLock();  //TODO: use this
 
 #pragma warning disable S2223   //Warning	S2223	Change the visibility of 'DoingInitialSync' or make it 'const' or 'readonly'.
         public static bool DoingInitialSync = false;
@@ -545,7 +551,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         }   //private bool IsWatchedFile(string fullName, Context context)
 
 #pragma warning disable AsyncFixer01
-        private async Task OnRenamedAsync(IRenamedFileSystemEvent rfse, CancellationToken token)
+        private static async Task OnRenamedAsync(IRenamedFileSystemEvent rfse, CancellationToken token)
         {
             var context = new Context(rfse, token);
 
@@ -579,7 +585,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        private async Task OnRemovedAsync(IFileSystemEvent fse, CancellationToken token)
+        private static async Task OnRemovedAsync(IFileSystemEvent fse, CancellationToken token)
         {
             var context = new Context(fse, token);
 
@@ -605,7 +611,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        public async Task OnAddedAsync(IFileSystemEvent fse, CancellationToken token)
+        public static async Task OnAddedAsync(IFileSystemEvent fse, CancellationToken token)
         {
             var context = new Context(fse, token);
 
@@ -631,7 +637,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        private async Task OnTouchedAsync(IFileSystemEvent fse, CancellationToken token)
+        private static async Task OnTouchedAsync(IFileSystemEvent fse, CancellationToken token)
         {
             var context = new Context(fse, token);
 

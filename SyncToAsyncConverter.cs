@@ -63,7 +63,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             using (await Global.FileOperationAsyncLock.LockAsync())
             {
-                var fileData = await FileExtensions.ReadAllTextAsync(fullName, context.Token);
+                //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                var fileData = await FileExtensions.ReadAllTextAsync(@"\\?\" + fullName, context.Token);
                 var originalData = fileData;
 
 

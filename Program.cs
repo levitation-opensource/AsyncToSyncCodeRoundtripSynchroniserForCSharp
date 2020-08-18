@@ -451,7 +451,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
                 else    //Assume ResX file
                 {
-                	var fileData = await FileExtensions.ReadAllBytesAsync(fullName, context.Token);
+                    //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                    var fileData = await FileExtensions.ReadAllBytesAsync(@"\\?\" + fullName, context.Token);
                     var originalData = fileData;
 
                     //save without transformations
@@ -705,8 +706,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             //NB! detect whether the file actually changed
-            var otherFileData = File.Exists(otherFullName) 
-                ? await FileExtensions.ReadAllTextAsync(otherFullName, context.Token) 
+            var otherFileData = File.Exists(otherFullName)
+                //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                ? await FileExtensions.ReadAllTextAsync(@"\\?\" + otherFullName, context.Token) 
                 : null;
 
             if (
@@ -718,7 +720,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                 Directory.CreateDirectory(Path.GetDirectoryName(otherFullName));
 
-                await FileExtensions.WriteAllTextAsync(otherFullName, fileData, context.Token);
+                //@"\\?\" prefix is needed for writing to long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                await FileExtensions.WriteAllTextAsync(@"\\?\" + otherFullName, fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
                 Global.ConverterSavedFileDates[otherFullName] = now;
@@ -751,7 +754,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             //NB! detect whether the file actually changed
             var otherFileData = File.Exists(otherFullName)
-                ? await FileExtensions.ReadAllBytesAsync(otherFullName, context.Token)
+                //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                ? await FileExtensions.ReadAllBytesAsync(@"\\?\" + otherFullName, context.Token)
                 : null;
 
             if (
@@ -763,7 +767,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                 Directory.CreateDirectory(Path.GetDirectoryName(otherFullName));
 
-                await FileExtensions.WriteAllBytesAsync(otherFullName, fileData, context.Token);
+                //@"\\?\" prefix is needed for writing to long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                await FileExtensions.WriteAllBytesAsync(@"\\?\" + otherFullName, fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
                 Global.ConverterSavedFileDates[otherFullName] = now;

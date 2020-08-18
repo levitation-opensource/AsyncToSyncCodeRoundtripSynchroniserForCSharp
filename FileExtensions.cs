@@ -18,7 +18,7 @@ using System.Threading.Tasks;
 
 namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
-    public static class FileExtensions
+    public static partial class FileExtensions
     {
         //adapted from https://github.com/dotnet/runtime/blob/5ddc873d9ea6cd4bc6a935fec3057fe89a6932aa/src/libraries/System.IO.FileSystem/src/System/IO/File.cs
 

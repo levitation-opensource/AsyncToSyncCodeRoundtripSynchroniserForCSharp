@@ -322,6 +322,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static bool DoingInitialSync = false;
 #pragma warning restore S2223
 
+        private static readonly AsyncLockQueueDictionary FileLocks = new AsyncLockQueueDictionary();
+
 
         public ConsoleWatch(IWatcher3 watch)
         {
@@ -468,7 +470,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
                 else    //Assume ResX file
                 {
-                    var fileData = await FileExtensions.ReadAllTextAsync(fullName, context.Token);
+                	var fileData = await FileExtensions.ReadAllBytesAsync(fullName, context.Token);
                     var originalData = fileData;
 
                     //save without transformations
@@ -567,8 +569,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         //NB! if file is renamed to cs~ or resx~ then that means there will be yet another write to same file, so lets skip this event here
                         if (!rfse.FileSystemInfo.FullName.EndsWith("~"))
                         {
-                            await FileUpdated(rfse.FileSystemInfo.FullName, context);
-                            await FileDeleted(rfse.PreviousFileSystemInfo.FullName, context);
+                            using (await FileLocks.LockAsync(rfse.FileSystemInfo.FullName, token))
+                            using (await FileLocks.LockAsync(rfse.PreviousFileSystemInfo.FullName, token))
+                            {
+                                await FileUpdated(rfse.FileSystemInfo.FullName, context);
+                                await FileDeleted(rfse.PreviousFileSystemInfo.FullName, context);
+                            }
                         }
                     }
                 }
@@ -596,9 +602,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     if (IsWatchedFile(fse.FileSystemInfo.FullName))
                     {
                         await AddMessage(ConsoleColor.Yellow, $"[{(fse.IsFile ? "F" : "D")}][-]:{fse.FileSystemInfo.FullName}", context);
-                    }
 
-                    await FileDeleted(fse.FileSystemInfo.FullName, context);
+                        using (await FileLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                        {
+                            await FileDeleted(fse.FileSystemInfo.FullName, context);
+                        }
+                    }
                 }
                 else
                 {
@@ -619,12 +628,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             {
                 if (fse.IsFile)
                 {
-                    //if (IsWatchedFile(fse.FileSystemInfo.FullName))
-                    //{
-                    //    await AddMessage(ConsoleColor.Green, $"[{(fse.IsFile ? "F" : "D")}][+]:{fse.FileSystemInfo.FullName}", context);
-                    //}
+                    if (IsWatchedFile(fse.FileSystemInfo.FullName))
+                    {
+                        //await AddMessage(ConsoleColor.Green, $"[{(fse.IsFile ? "F" : "D")}][+]:{fse.FileSystemInfo.FullName}", context);
 
-                    await FileUpdated(fse.FileSystemInfo.FullName, context);
+                        using (await FileLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                        {
+                            await FileUpdated(fse.FileSystemInfo.FullName, context);
+                        }
+                    }
                 }
                 else
                 {
@@ -648,9 +660,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     if (IsWatchedFile(fse.FileSystemInfo.FullName))
                     {
                         await AddMessage(ConsoleColor.Gray, $"[{(fse.IsFile ? "F" : "D")}][T]:{fse.FileSystemInfo.FullName}", context);
-                    }
 
-                    await FileUpdated(fse.FileSystemInfo.FullName, context);
+                        using (await FileLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                        {
+                            await FileUpdated(fse.FileSystemInfo.FullName, context);
+                        }
+                    }
                 }
                 else
                 {
@@ -710,13 +725,61 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 ? await FileExtensions.ReadAllTextAsync(otherFullName, context.Token) 
                 : null;
 
-            if ((otherFileData?.Length ?? -1) != fileData.Length || otherFileData != fileData)
+            if (
+                (otherFileData?.Length ?? -1) != fileData.Length 
+                || otherFileData != fileData
+            )
             {
                 await DeleteFile(otherFullName, context);
 
                 Directory.CreateDirectory(Path.GetDirectoryName(otherFullName));
 
                 await FileExtensions.WriteAllTextAsync(otherFullName, fileData, context.Token);
+
+                var now = DateTime.UtcNow;  //NB! compute now after saving the file
+                Global.ConverterSavedFileDates[otherFullName] = now;
+
+
+                await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);
+            }
+            else if (false)
+            {
+                //touch the file
+                var now = DateTime.UtcNow;  //NB! compute common now for ConverterSavedFileDates
+
+                try
+                {
+                    File.SetLastWriteTimeUtc(otherFullName, now);
+                }
+                catch (Exception ex)
+                {
+                    await ConsoleWatch.WriteException(ex, context);
+                }
+
+                Global.ConverterSavedFileDates[otherFullName] = now;
+            }
+        }
+
+        public static async Task SaveFileModifications(string fullName, byte[] fileData, byte[] originalData, Context context)
+        {
+            var otherFullName = GetOtherFullName(fullName);
+
+
+            //NB! detect whether the file actually changed
+            var otherFileData = File.Exists(otherFullName)
+                ? await FileExtensions.ReadAllBytesAsync(otherFullName, context.Token)
+                : null;
+
+            if (
+                (otherFileData?.Length ?? -1) != fileData.Length 
+                || !FileExtensions.BinaryEqual(otherFileData, fileData)
+            )
+            {
+                await DeleteFile(otherFullName, context);
+
+                Directory.CreateDirectory(Path.GetDirectoryName(otherFullName));
+
+                await FileExtensions.WriteAllBytesAsync(otherFullName, fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
                 Global.ConverterSavedFileDates[otherFullName] = now;

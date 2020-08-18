@@ -636,7 +636,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             try
             {
-                if (fse.IsFile)
+                if (
+                    fse.IsFile
+                    && File.Exists(fse.FileSystemInfo.FullName)     //for some reason fse.IsFile is set even for folders
+                )
                 {
                     if (IsWatchedFile(fse.FileSystemInfo.FullName))
                     {

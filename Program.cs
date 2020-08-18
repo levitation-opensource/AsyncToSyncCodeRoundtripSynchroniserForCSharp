@@ -182,44 +182,25 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
                         //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
-                        foreach (var fileSystemInfo in new DirectoryInfo(Global.SyncPath)
-                                                    .GetFileSystemInfos("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
+                        foreach (var fileInfo in new DirectoryInfo(Global.SyncPath)
+                                                    .GetFiles("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
                         {
-                            await ConsoleWatch.OnAddedAsync
-                            (
-                                new DummyFileSystemEvent(fileSystemInfo),
-                                new CancellationToken()
-                            );
+                            {
+                                await ConsoleWatch.OnAddedAsync
+                                (
+                                    new DummyFileSystemEvent(fileInfo),
+                                    new CancellationToken()
+                                );
+                            }
                         }
-
-                        foreach (var fileSystemInfo in new DirectoryInfo(Global.SyncPath)
-                                                    .GetFileSystemInfos("*." + Global.WatchedResXExtension, SearchOption.AllDirectories))
-                        {
-                            await ConsoleWatch.OnAddedAsync
-                            (
-                                new DummyFileSystemEvent(fileSystemInfo),
-                                new CancellationToken()
-                            );
-                        }
-
 
                         //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
-                        foreach (var fileSystemInfo in new DirectoryInfo(Global.AsyncPath)
-                                                    .GetFileSystemInfos("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
+                        foreach (var fileInfo in new DirectoryInfo(Global.AsyncPath)
+                                                    .GetFiles("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
                         {
                             await ConsoleWatch.OnAddedAsync
                             (
-                                new DummyFileSystemEvent(fileSystemInfo),
-                                new CancellationToken()
-                            );
-                        }
-
-                        foreach (var fileSystemInfo in new DirectoryInfo(Global.AsyncPath)
-                                                    .GetFileSystemInfos("*." + Global.WatchedResXExtension, SearchOption.AllDirectories))
-                        {
-                            await ConsoleWatch.OnAddedAsync
-                            (
-                                new DummyFileSystemEvent(fileSystemInfo),
+                                new DummyFileSystemEvent(fileInfo),
                                 new CancellationToken()
                             );
                         }

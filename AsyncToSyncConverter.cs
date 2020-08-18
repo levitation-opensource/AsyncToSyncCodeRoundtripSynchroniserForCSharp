@@ -63,19 +63,6 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static async Task AsyncFileUpdated(string fullName, Context context)
         {
-            var otherFullName = ConsoleWatch.GetOtherFullName(fullName);
-
-            var filenames = new List<string>()
-                            {
-                                fullName,
-                                otherFullName
-                            };
-
-            //NB! in order to avoid deadlocks, always take the locks in deterministic order
-            filenames.Sort(StringComparer.InvariantCultureIgnoreCase);
-
-            using (await Global.CodeFileOperationLocks.LockAsync(filenames[0], context.Token))
-            using (await Global.CodeFileOperationLocks.LockAsync(filenames[1], context.Token))
             //using (await Global.FileOperationAsyncLock.LockAsync())
             {
                 //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7

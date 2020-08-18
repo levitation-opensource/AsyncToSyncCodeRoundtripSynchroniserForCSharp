@@ -41,8 +41,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
 
-        internal static readonly AsyncLockQueueDictionary BinaryFileOperationLocks = new AsyncLockQueueDictionary();
-        internal static readonly AsyncLockQueueDictionary CodeFileOperationLocks = new AsyncLockQueueDictionary();
+        internal static readonly AsyncLockQueueDictionary FileOperationLocks = new AsyncLockQueueDictionary();
         //internal static readonly AsyncLock FileOperationAsyncLock = new AsyncLock();
     }
 #pragma warning restore S2223
@@ -432,32 +431,46 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 && NeedsUpdate(fullName)     //NB!
             )
             {
-                if (
-                    fullName.EndsWith("." + Global.WatchedCodeExtension)
-                    || Global.WatchedCodeExtension == "*"
-                )
-                {
-                    if (fullName.ToUpperInvariant().StartsWith(Global.AsyncPath.ToUpperInvariant()))
-                    {
-                        await AsyncToSyncConverter.AsyncFileUpdated(fullName, context);
-                    }
-                    else if (fullName.ToUpperInvariant().StartsWith(Global.SyncPath.ToUpperInvariant()))     //NB!
-                    {
-                        await SyncToAsyncConverter.SyncFileUpdated(fullName, context);
-                    }
-                    else
-                    {
-                        throw new ArgumentException("fullName");
-                    }
-                }
-                else    //Assume ResX file
-                {
-                    //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                    var fileData = await FileExtensions.ReadAllBytesAsync(@"\\?\" + fullName, context.Token);
-                    var originalData = fileData;
+                var otherFullName = GetOtherFullName(fullName);
+                var filenames = new List<string>()
+                            {
+                                fullName,
+                                otherFullName
+                            };
 
-                    //save without transformations
-                    await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
+                //NB! in order to avoid deadlocks, always take the locks in deterministic order
+                filenames.Sort(StringComparer.InvariantCultureIgnoreCase);
+
+                using (await Global.FileOperationLocks.LockAsync(filenames[0], context.Token))
+                using (await Global.FileOperationLocks.LockAsync(filenames[1], context.Token))
+                {
+                    if (
+                        fullName.EndsWith("." + Global.WatchedCodeExtension)
+                        || Global.WatchedCodeExtension == "*"
+                    )
+                    {
+                        if (fullName.ToUpperInvariant().StartsWith(Global.AsyncPath.ToUpperInvariant()))
+                        {
+                            await AsyncToSyncConverter.AsyncFileUpdated(fullName, context);
+                        }
+                        else if (fullName.ToUpperInvariant().StartsWith(Global.SyncPath.ToUpperInvariant()))     //NB!
+                        {
+                            await SyncToAsyncConverter.SyncFileUpdated(fullName, context);
+                        }
+                        else
+                        {
+                            throw new ArgumentException("fullName");
+                        }
+                    }
+                    else    //Assume ResX file
+                    {
+                        //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                        var fileData = await FileExtensions.ReadAllBytesAsync(@"\\?\" + fullName, context.Token);
+                        var originalData = fileData;
+
+                        //save without transformations
+                        await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
+                    }
                 }
             }
         }
@@ -773,28 +786,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 || !FileExtensions.BinaryEqual(otherFileData, fileData)
             )
             {
-                var filenames = new List<string>()
-                            {
-                                fullName,
-                                otherFullName
-                            };
+                await DeleteFile(otherFullName, context);
 
-                //NB! in order to avoid deadlocks, always take the locks in deterministic order
-                filenames.Sort(StringComparer.InvariantCultureIgnoreCase);
+                Directory.CreateDirectory(Path.GetDirectoryName(otherFullName));
 
-                using (await Global.BinaryFileOperationLocks.LockAsync(filenames[0], context.Token))
-                using (await Global.BinaryFileOperationLocks.LockAsync(filenames[1], context.Token))
-                {
-                    await DeleteFile(otherFullName, context);
+                //@"\\?\" prefix is needed for writing to long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
+                await FileExtensions.WriteAllBytesAsync(@"\\?\" + otherFullName, fileData, context.Token);
 
-                    Directory.CreateDirectory(Path.GetDirectoryName(otherFullName));
-
-                    //@"\\?\" prefix is needed for writing to long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                    await FileExtensions.WriteAllBytesAsync(@"\\?\" + otherFullName, fileData, context.Token);
-
-                    var now = DateTime.UtcNow;  //NB! compute now after saving the file
-                    ConverterSavedFileDates[otherFullName] = now;
-                }
+                var now = DateTime.UtcNow;  //NB! compute now after saving the file
+                ConverterSavedFileDates[otherFullName] = now;
 
 
                 await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);

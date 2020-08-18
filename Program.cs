@@ -42,7 +42,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
         internal static readonly AsyncLockQueueDictionary BinaryFileOperationLocks = new AsyncLockQueueDictionary();
-        internal static readonly AsyncLockQueueDictionary FileOperationLocks = new AsyncLockQueueDictionary();
+        internal static readonly AsyncLockQueueDictionary CodeFileOperationLocks = new AsyncLockQueueDictionary();
         //internal static readonly AsyncLock FileOperationAsyncLock = new AsyncLock();
     }
 #pragma warning restore S2223

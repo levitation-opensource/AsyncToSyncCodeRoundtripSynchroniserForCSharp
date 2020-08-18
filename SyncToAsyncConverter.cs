@@ -72,8 +72,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             //NB! in order to avoid deadlocks, always take the locks in deterministic order
             filenames.Sort(StringComparer.InvariantCultureIgnoreCase);
 
-            using (await Global.FileOperationLocks.LockAsync(filenames[0], context.Token))
-            using (await Global.FileOperationLocks.LockAsync(filenames[1], context.Token))
+            using (await Global.CodeFileOperationLocks.LockAsync(filenames[0], context.Token))
+            using (await Global.CodeFileOperationLocks.LockAsync(filenames[1], context.Token))
             //using (await Global.FileOperationAsyncLock.LockAsync())
             {
                 //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7

@@ -304,7 +304,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 #pragma warning restore S2223
 
         private static ConcurrentDictionary<string, DateTime> ConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
-        private static readonly AsyncLockQueueDictionary FileLocks = new AsyncLockQueueDictionary();
+        private static readonly AsyncLockQueueDictionary FileEventLocks = new AsyncLockQueueDictionary();
 
 
         public ConsoleWatch(IWatcher3 watch)
@@ -561,8 +561,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             //NB! in order to avoid deadlocks in case of file swaps, always take the locks in deterministic order
                             filenames.Sort(StringComparer.InvariantCultureIgnoreCase);
 
-                            using (await FileLocks.LockAsync(filenames[0], token))
-                            using (await FileLocks.LockAsync(filenames[1], token))
+                            using (await FileEventLocks.LockAsync(filenames[0], token))
+                            using (await FileEventLocks.LockAsync(filenames[1], token))
                             {
                                 await FileUpdated(rfse.FileSystemInfo.FullName, context);
                                 await FileDeleted(rfse.PreviousFileSystemInfo.FullName, context);
@@ -595,7 +595,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     {
                         await AddMessage(ConsoleColor.Yellow, $"[{(fse.IsFile ? "F" : "D")}][-]:{fse.FileSystemInfo.FullName}", context);
 
-                        using (await FileLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                        using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
                         {
                             await FileDeleted(fse.FileSystemInfo.FullName, context);
                         }
@@ -624,7 +624,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     {
                         //await AddMessage(ConsoleColor.Green, $"[{(fse.IsFile ? "F" : "D")}][+]:{fse.FileSystemInfo.FullName}", context);
 
-                        using (await FileLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                        using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
                         {
                             await FileUpdated(fse.FileSystemInfo.FullName, context);
                         }
@@ -656,7 +656,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     {
                         await AddMessage(ConsoleColor.Gray, $"[{(fse.IsFile ? "F" : "D")}][T]:{fse.FileSystemInfo.FullName}", context);
 
-                        using (await FileLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                        using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
                         {
                             await FileUpdated(fse.FileSystemInfo.FullName, context);
                         }

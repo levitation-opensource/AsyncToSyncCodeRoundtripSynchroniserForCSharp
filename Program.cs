@@ -41,9 +41,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
 
-        internal static readonly AsyncLock FileOperationAsyncLock = new AsyncLock();
-
-        internal static ConcurrentDictionary<string, DateTime> ConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
+        internal static readonly AsyncLockQueueDictionary FileOperationLocks = new AsyncLockQueueDictionary();
+        //internal static readonly AsyncLock FileOperationAsyncLock = new AsyncLock();
     }
 #pragma warning restore S2223
 
@@ -303,6 +302,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static bool DoingInitialSync = false;
 #pragma warning restore S2223
 
+        private static ConcurrentDictionary<string, DateTime> ConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
         private static readonly AsyncLockQueueDictionary FileLocks = new AsyncLockQueueDictionary();
 
 
@@ -396,7 +396,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static DateTime GetConverterSaveDate(string fullName)
         {
             DateTime converterSaveDate;
-            if (!Global.ConverterSavedFileDates.TryGetValue(fullName, out converterSaveDate))
+            if (!ConverterSavedFileDates.TryGetValue(fullName, out converterSaveDate))
             {
                 converterSaveDate = DateTime.MinValue;
             }
@@ -733,7 +733,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 await FileExtensions.WriteAllTextAsync(@"\\?\" + otherFullName, fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
-                Global.ConverterSavedFileDates[otherFullName] = now;
+                ConverterSavedFileDates[otherFullName] = now;
 
 
                 await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);
@@ -752,7 +752,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     await ConsoleWatch.WriteException(ex, context);
                 }
 
-                Global.ConverterSavedFileDates[otherFullName] = now;
+                ConverterSavedFileDates[otherFullName] = now;
             }
         }
 
@@ -780,7 +780,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 await FileExtensions.WriteAllBytesAsync(@"\\?\" + otherFullName, fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
-                Global.ConverterSavedFileDates[otherFullName] = now;
+                ConverterSavedFileDates[otherFullName] = now;
 
 
                 await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);
@@ -799,7 +799,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     await ConsoleWatch.WriteException(ex, context);
                 }
 
-                Global.ConverterSavedFileDates[otherFullName] = now;
+                ConverterSavedFileDates[otherFullName] = now;
             }
         }
 

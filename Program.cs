@@ -148,7 +148,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 //Console.WriteLine(Environment.Is64BitProcess ? "x64 version" : "x86 version");
                 Console.WriteLine("Press Ctrl+C to stop the monitors.");
 
-                // start the monitor.
+                //start the monitor.
                 using (var watch = new Watcher())
                 {
                     //var drvs = System.IO.DriveInfo.GetDrives();
@@ -169,13 +169,19 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     var consoleWatch = new ConsoleWatch(watch);
 
 
-                    var messageContext = new Context(
-                        eventObj: null,
-                        token: new CancellationToken()
-                    );
+                    //start watching
+                    //NB! start watching before synchronisation
+                    watch.Start();
+
 
                     if (true)
                     {
+                        var messageContext = new Context(
+                            eventObj: null,
+                            token: new CancellationToken()
+                        );
+
+
                         await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", messageContext);
                         ConsoleWatch.DoingInitialSync = true;   //NB!
 
@@ -210,15 +216,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     }
 
 
-                    // start watching
-                    watch.Start();
-
-                    // listen for the Ctrl+C 
+                    //listen for the Ctrl+C 
                     WaitForCtrlC();
 
                     Console.WriteLine("Stopping...");
 
-                    // stop everything.
+                    //stop everything.
                     watch.Stop();
 
                     Console.WriteLine("Exiting...");

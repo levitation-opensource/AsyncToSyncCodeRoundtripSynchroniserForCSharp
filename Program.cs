@@ -34,10 +34,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static List<string> ExcludedExtensions = new List<string>() { "*~", "tmp" };
         public static List<string> IgnorePathsStartingWith = new List<string>();
         public static List<string> IgnorePathsContaining = new List<string>();
-
-
+        
         public static string AsyncPath = "";
         public static string SyncPath = "";
+
+        public static bool Bidirectional = true;
 
 
 
@@ -109,6 +110,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             var fileConfig = config.GetSection("Files");
 
+            Global.Bidirectional = fileConfig["Bidirectional"]?.ToUpperInvariant() != "FALSE";   //default is true
+
             Global.AsyncPath = fileConfig["AsyncPath"];
             Global.SyncPath = fileConfig["SyncPath"];
 
@@ -160,9 +163,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     //    }
                     //}
 
-
-                    watch.Add(new Request(Global.AsyncPath, recursive: true));
                     watch.Add(new Request(Global.SyncPath, recursive: true));
+
+                    if (Global.Bidirectional)
+                    {
+                        watch.Add(new Request(Global.AsyncPath, recursive: true));
+                    }
 
 
                     // prepare the console watcher so we can output pretty messages.
@@ -199,15 +205,18 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             }
                         }
 
-                        //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
-                        foreach (var fileInfo in new DirectoryInfo(Global.AsyncPath)
-                                                    .GetFiles("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
+                        if (Global.Bidirectional)
                         {
-                            await ConsoleWatch.OnAddedAsync
-                            (
-                                new DummyFileSystemEvent(fileInfo),
-                                new CancellationToken()
-                            );
+                            //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
+                            foreach (var fileInfo in new DirectoryInfo(Global.AsyncPath)
+                                                        .GetFiles("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
+                            {
+                                await ConsoleWatch.OnAddedAsync
+                                (
+                                    new DummyFileSystemEvent(fileInfo),
+                                    new CancellationToken()
+                                );
+                            }
                         }
 
 

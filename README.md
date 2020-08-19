@@ -3,6 +3,8 @@ Automatically and in realtime converts asynchronous C# code in one folder to syn
 
 You can also write your code in synchronous C# format and it will be automatically converted to asynchronous C# code in the background.
 
+State: Ready to use. Maintained and in active use.
+
 ### Installation
 
     * Copy appsettings.example.json to appsettings.json

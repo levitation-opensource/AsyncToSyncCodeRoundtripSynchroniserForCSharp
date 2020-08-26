@@ -43,7 +43,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static Task<string> ReadAllTextAsync(string path, CancellationToken cancellationToken = default(CancellationToken))
             => ReadAllTextAsync(path, UTF8NoBOM, cancellationToken);
 
-        public static Task<string> ReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
+        public static async Task<string> ReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
         {
             if (path == null)
                 throw new ArgumentNullException(nameof(path));
@@ -52,9 +52,32 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             if (path.Length == 0)
                 throw new ArgumentException("SR.Argument_EmptyPath: {0}", nameof(path));
 
-            return cancellationToken.IsCancellationRequested
-                ? Task.FromCanceled<string>(cancellationToken)
-                : InternalReadAllTextAsync(path, encoding, cancellationToken);
+            while (true)    //roland
+            {
+                try    //roland
+                {
+                    return cancellationToken.IsCancellationRequested
+                        ? await Task.FromCanceled<string>(cancellationToken)
+                        : await InternalReadAllTextAsync(path, encoding, cancellationToken);
+                }
+                catch (IOException)    //roland
+                {
+                    //retry after delay
+                    try
+                    {
+#if !NOASYNC
+                        await Task.Delay(1000, cancellationToken);     //TODO: config file?
+#else
+                        cancellationToken.WaitHandle.WaitOne(1000);
+#endif
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        //do nothing here
+                        return await Task.FromCanceled<string>(cancellationToken);
+                    }
+                }
+            }
         }
 
         private static async Task<string> InternalReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken)
@@ -112,7 +135,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static Task WriteAllTextAsync(string path, string contents, CancellationToken cancellationToken = default(CancellationToken))
             => WriteAllTextAsync(path, contents, UTF8NoBOM, cancellationToken);
 
-        public static Task WriteAllTextAsync(string path, string contents, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
+        public static async Task WriteAllTextAsync(string path, string contents, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
         {
             if (path == null)
                 throw new ArgumentNullException(nameof(path));
@@ -121,18 +144,35 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             if (path.Length == 0)
                 throw new ArgumentException("SR.Argument_EmptyPath: {0}", nameof(path));
 
-            if (cancellationToken.IsCancellationRequested)
+            while (true)    //roland
             {
-                return Task.FromCanceled(cancellationToken);
-            }
+                try    //roland
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    //if (cancellationToken.IsCancellationRequested)
+                    //{
+                    //    return Task.FromCanceled(cancellationToken);
+                    //}
 
-            if (string.IsNullOrEmpty(contents))
-            {
-                new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read).Dispose();
-                return Task.CompletedTask;
-            }
+                    if (string.IsNullOrEmpty(contents))
+                    {
+                        new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read).Dispose();
+                        return; // await Task.CompletedTask;
+                    }
 
-            return InternalWriteAllTextAsync(AsyncStreamWriter(path, encoding, append: false), contents, cancellationToken);
+                    await InternalWriteAllTextAsync(AsyncStreamWriter(path, encoding, append: false), contents, cancellationToken);
+                    return;
+                }
+                catch (IOException)    //roland
+                {
+                    //retry after delay
+#if !NOASYNC
+                    await Task.Delay(1000, cancellationToken);     //TODO: config file?
+#else
+                    cancellationToken.WaitHandle.WaitOne(1000);
+#endif
+                }
+            }
         }
 
         private static async Task InternalWriteAllTextAsync(StreamWriter sw, string contents, CancellationToken cancellationToken)

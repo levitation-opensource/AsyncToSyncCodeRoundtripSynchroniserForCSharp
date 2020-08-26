@@ -19,7 +19,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using myoddweb.directorywatcher;
 using myoddweb.directorywatcher.interfaces;
-using Nito.AsyncEx;
 
 namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
@@ -394,7 +393,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             try
             {
                 if (File.Exists(fullName + "~"))
+#pragma warning disable SEC0116 //Warning	SEC0116	Unvalidated file paths are passed to a file delete API, which can allow unauthorized file system operations (e.g. read, write, delete) to be performed on unintended server files.
                     File.Delete(fullName + "~");
+#pragma warning restore SEC0116
 
                 if (File.Exists(fullName))
                     File.Move(fullName, fullName + "~");

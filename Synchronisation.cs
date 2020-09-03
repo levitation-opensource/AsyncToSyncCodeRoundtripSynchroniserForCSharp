@@ -10,7 +10,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
     public class AsyncLockQueueDictionary
     {
-        private readonly object DictionaryAccessMutex = new object();
+        //private readonly object DictionaryAccessMutex = new object();
+        private readonly SemaphoreSlim DictionaryAccessMutex = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, AsyncLockWithCount> LockQueueDictionary = new Dictionary<string, AsyncLockWithCount>();
 
         public sealed class AsyncLockWithCount
@@ -25,7 +26,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        public sealed class LockDictReleaser : IDisposable
+        public sealed class LockDictReleaser : IDisposable  //TODO: implement IAsyncDisposable in .NET 5.0
         {
             private readonly string Name;
             private readonly AsyncLockWithCount LockEntry;
@@ -50,7 +51,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             lockHandle.Dispose();
 
-            lock (DictionaryAccessMutex)
+            //lock (DictionaryAccessMutex)
+            DictionaryAccessMutex.Wait();
+            try
             {
                 lockEntry.WaiterCount--;
                 Debug.Assert(lockEntry.WaiterCount >= 0);
@@ -60,16 +63,22 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     LockQueueDictionary.Remove(name);
                 }
             }
+            finally
+            {
+                DictionaryAccessMutex.Release();
+            }
         }
 
         public async Task<LockDictReleaser> LockAsync(string name, CancellationToken cancellationToken = default(CancellationToken))
         {
             AsyncLockWithCount lockEntry;
-            lock (DictionaryAccessMutex)
+            //lock (DictionaryAccessMutex)
+            await DictionaryAccessMutex.WaitAsync(cancellationToken);
+            try
             {
                 if (!LockQueueDictionary.TryGetValue(name, out lockEntry))
                 {
-                    lockEntry = new AsyncLockWithCount();
+                    lockEntry = new AsyncLockWithCount();                    
                     LockQueueDictionary.Add(name, lockEntry);
                 }
                 else
@@ -77,12 +86,16 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     lockEntry.WaiterCount++;  //NB! must be done inside the lock and BEFORE waiting for the lock
                 }
             }
+            finally
+            {
+                DictionaryAccessMutex.Release();
+            }
 
             var lockHandle = await lockEntry.LockEntry.LockAsync(cancellationToken);
             return new LockDictReleaser(name, lockEntry, lockHandle, this);
         }
 
-        public sealed class MultiLockDictReleaser : IDisposable
+        public sealed class MultiLockDictReleaser : IDisposable  //TODO: implement IAsyncDisposable in .NET 5.0
         {
             private readonly LockDictReleaser[] Releasers;
 
@@ -111,7 +124,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             //NB! in order to avoid deadlocks, always take the locks in deterministic order
             names.Sort(StringComparer.InvariantCultureIgnoreCase);
-        
+
             var releaser1 = await this.LockAsync(names[0], cancellationToken);
             var releaser2 = name1 != name2 ? await this.LockAsync(names[1], cancellationToken) : null;
 

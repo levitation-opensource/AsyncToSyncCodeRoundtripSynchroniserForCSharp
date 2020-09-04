@@ -313,7 +313,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static bool DoingInitialSync = false;
 #pragma warning restore S2223
 
-        private static ConcurrentDictionary<string, DateTime> ConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
+        private static ConcurrentDictionary<string, DateTime> BidirectionalConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
         private static readonly AsyncLockQueueDictionary FileEventLocks = new AsyncLockQueueDictionary();
 
 
@@ -366,8 +366,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             {
                 return fullName.Substring(Global.SyncPath.Length);
             }
-
-            throw new ArgumentException("fullName");
+            else
+            {
+                throw new ArgumentException("fullName");
+            }
         }
 
         public static string GetOtherFullName(string fullName)
@@ -376,11 +378,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             if (fullName.ToUpperInvariant().StartsWith(Global.AsyncPath.ToUpperInvariant()))
             {
-                return Global.SyncPath + nonFullName;
+                return Path.Combine(Global.SyncPath, nonFullName);
             }
             else if (fullName.ToUpperInvariant().StartsWith(Global.SyncPath.ToUpperInvariant()))
             {
-                return Global.AsyncPath + nonFullName;
+                return Path.Combine(Global.AsyncPath, nonFullName);
             }
             else
             {
@@ -427,12 +429,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             {
                 await WriteException(ex, context);
             }
-        }
+        }   //public static async Task DeleteFile(string fullName, Context context)
 
-        public static DateTime GetConverterSaveDate(string fullName)
+        public static DateTime GetBidirectionalConverterSaveDate(string fullName)
         {
             DateTime converterSaveDate;
-            if (!ConverterSavedFileDates.TryGetValue(fullName, out converterSaveDate))
+            if (!BidirectionalConverterSavedFileDates.TryGetValue(fullName, out converterSaveDate))
             {
                 converterSaveDate = DateTime.MinValue;
             }
@@ -445,7 +447,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             if (DoingInitialSync)
                 return true;
 
-            var converterSaveDate = GetConverterSaveDate(fullName);
+            var converterSaveDate = GetBidirectionalConverterSaveDate(fullName);
             var fileTime = GetFileTime(fullName);
 
             if (
@@ -502,7 +504,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     }
                 }
             }
-        }
+        }   //public static async Task FileUpdated(string fullName, Context context)
 
         private static async Task FileDeleted(string fullName, Context context)
         {
@@ -575,36 +577,36 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             return false;
 
-        }   //private bool IsWatchedFile(string fullName, Context context)
+        }   //private bool IsWatchedFile(string fullName)
 
 #pragma warning disable AsyncFixer01
-        private static async Task OnRenamedAsync(IRenamedFileSystemEvent rfse, CancellationToken token)
+        private static async Task OnRenamedAsync(IRenamedFileSystemEvent fse, CancellationToken token)
         {
-            var context = new Context(rfse, token);
+            var context = new Context(fse, token);
 
             try
             {
-                if (rfse.IsFile)
+                if (fse.IsFile)
                 {
-                    if (IsWatchedFile(rfse.PreviousFileSystemInfo.FullName)
-                        || IsWatchedFile(rfse.FileSystemInfo.FullName))
+                    if (IsWatchedFile(fse.PreviousFileSystemInfo.FullName)
+                        || IsWatchedFile(fse.FileSystemInfo.FullName))
                     {
-                        await AddMessage(ConsoleColor.Cyan, $"[{(rfse.IsFile ? "F" : "D")}][R]:{rfse.PreviousFileSystemInfo.FullName} > {rfse.FileSystemInfo.FullName}", context);
+                        await AddMessage(ConsoleColor.Cyan, $"[{(fse.IsFile ? "F" : "D")}][R]:{fse.PreviousFileSystemInfo.FullName} > {fse.FileSystemInfo.FullName}", context);
 
                         //NB! if file is renamed to cs~ or resx~ then that means there will be yet another write to same file, so lets skip this event here
-                        if (!rfse.FileSystemInfo.FullName.EndsWith("~"))
+                        if (!fse.FileSystemInfo.FullName.EndsWith("~"))
                         {
                             //using (await Global.FileOperationLocks.LockAsync(rfse.FileSystemInfo.FullName, rfse.PreviousFileSystemInfo.FullName, context.Token))  //comment-out: prevent deadlock
                             {
-                                await FileUpdated(rfse.FileSystemInfo.FullName, context);
-                                await FileDeleted(rfse.PreviousFileSystemInfo.FullName, context);
+                                await FileUpdated(fse.FileSystemInfo.FullName, context);
+                                await FileDeleted(fse.PreviousFileSystemInfo.FullName, context);
                             }
                         }
                     }
                 }
                 else
                 {
-                    await AddMessage(ConsoleColor.Cyan, $"[{(rfse.IsFile ? "F" : "D")}][R]:{rfse.PreviousFileSystemInfo.FullName} > {rfse.FileSystemInfo.FullName}", context);
+                    await AddMessage(ConsoleColor.Cyan, $"[{(fse.IsFile ? "F" : "D")}][R]:{fse.PreviousFileSystemInfo.FullName} > {fse.FileSystemInfo.FullName}", context);
 
                     //TODO trigger update / delete event for all files in new folder
                 }
@@ -613,7 +615,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             {
                 await WriteException(ex, context);
             }
-        }
+        }   //private static async Task OnRenamedAsync(IRenamedFileSystemEvent fse, CancellationToken token)
 
         private static async Task OnRemovedAsync(IFileSystemEvent fse, CancellationToken token)
         {
@@ -766,7 +768,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 await FileExtensions.WriteAllTextAsync(@"\\?\" + otherFullName, fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
-                ConverterSavedFileDates[otherFullName] = now;
+                BidirectionalConverterSavedFileDates[otherFullName] = now;
 
 
                 await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);
@@ -785,9 +787,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     await ConsoleWatch.WriteException(ex, context);
                 }
 
-                ConverterSavedFileDates[otherFullName] = now;
+                BidirectionalConverterSavedFileDates[otherFullName] = now;
             }
-        }
+        }   //public static async Task SaveFileModifications(string fullName, string fileData, string originalData, Context context)
 
         public static async Task SaveFileModifications(string fullName, byte[] fileData, byte[] originalData, Context context)
         {
@@ -813,7 +815,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 await FileExtensions.WriteAllBytesAsync(@"\\?\" + otherFullName, fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
-                ConverterSavedFileDates[otherFullName] = now;
+                BidirectionalConverterSavedFileDates[otherFullName] = now;
 
 
                 await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);
@@ -832,9 +834,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     await ConsoleWatch.WriteException(ex, context);
                 }
 
-                ConverterSavedFileDates[otherFullName] = now;
+                BidirectionalConverterSavedFileDates[otherFullName] = now;
             }
-        }
+        }   //public static async Task SaveFileModifications(string fullName, byte[] fileData, byte[] originalData, Context context)
 
 #pragma warning restore AsyncFixer01
     }

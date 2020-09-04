@@ -179,49 +179,46 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     watch.Start();
 
 
-                    if (true)
+                    var messageContext = new Context(
+                        eventObj: null,
+                        token: new CancellationToken()
+                    );
+
+
+                    await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", messageContext);
+                    ConsoleWatch.DoingInitialSync = true;   //NB!
+
+
+
+                    //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
+                    foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.SyncPath), "*." + Global.WatchedCodeExtension))
                     {
-                        var messageContext = new Context(
-                            eventObj: null,
-                            token: new CancellationToken()
-                        );
-
-
-                        await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", messageContext);
-                        ConsoleWatch.DoingInitialSync = true;   //NB!
-
-
-                        //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
-                        foreach (var fileInfo in new DirectoryInfo(Global.SyncPath)
-                                                    .GetFiles("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
                         {
-                            {
-                                await ConsoleWatch.OnAddedAsync
-                                (
-                                    new DummyFileSystemEvent(fileInfo),
-                                    new CancellationToken()
-                                );
-                            }
+                            await ConsoleWatch.OnAddedAsync
+                            (
+                                new DummyFileSystemEvent(fileInfo),
+                                new CancellationToken()
+                            );
                         }
-
-                        if (Global.Bidirectional)
-                        {
-                            //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
-                            foreach (var fileInfo in new DirectoryInfo(Global.AsyncPath)
-                                                        .GetFiles("*." + Global.WatchedCodeExtension, SearchOption.AllDirectories))
-                            {
-                                await ConsoleWatch.OnAddedAsync
-                                (
-                                    new DummyFileSystemEvent(fileInfo),
-                                    new CancellationToken()
-                                );
-                            }
-                        }
-
-
-                        ConsoleWatch.DoingInitialSync = false;   //NB!
-                        await ConsoleWatch.AddMessage(ConsoleColor.White, "Done initial synchronisation...", messageContext);
                     }
+
+                    if (Global.Bidirectional)
+                    {
+                        //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
+                        foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.AsyncPath), "*." + Global.WatchedCodeExtension))
+                        {
+                            await ConsoleWatch.OnAddedAsync
+                            (
+                                new DummyFileSystemEvent(fileInfo),
+                                new CancellationToken()
+                            );
+                        }
+                    }
+
+
+
+                    ConsoleWatch.DoingInitialSync = false;   //NB!
+                    await ConsoleWatch.AddMessage(ConsoleColor.White, "Done initial synchronisation...", messageContext);
 
 
                     //listen for the Ctrl+C 
@@ -243,6 +240,67 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
+        private static IEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, int recursionLevel = 0)
+        {
+#if false //this built-in functio will throw IOException in case some subfolder is an invalid reparse point
+            return new DirectoryInfo(sourceDir)
+                .GetFiles(searchPattern, SearchOption.AllDirectories);
+#else
+            FileInfo[] fileInfos;
+            try
+            {
+                fileInfos = srcDirInfo.GetFiles(searchPattern, SearchOption.TopDirectoryOnly);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                //ignore exceptions due to long pathnames       //TODO: find a way to handle them
+                fileInfos = Array.Empty<FileInfo>();
+            }
+
+            foreach (var fileInfo in fileInfos)
+            {
+                yield return fileInfo;
+            }
+
+
+            DirectoryInfo[] dirInfos;
+#pragma warning disable S2327   //Warning	S2327	Combine this 'try' with the one starting on line XXX.
+            try
+            {
+                dirInfos = srcDirInfo.GetDirectories("*", SearchOption.TopDirectoryOnly);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                //ignore exceptions due to long pathnames       //TODO: find a way to handle them
+                dirInfos = Array.Empty<DirectoryInfo>();
+            }
+#pragma warning restore S2327
+
+            foreach (var dirInfo in dirInfos)
+            {
+                //TODO: option to follow reparse points
+                if ((dirInfo.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+                    continue;
+
+
+                var nonFullNameInvariant = ConsoleWatch.GetNonFullName(dirInfo.FullName) + Path.PathSeparator;
+                if (
+                    Global.IgnorePathsStartingWith.Any(x => nonFullNameInvariant.StartsWith(x))
+                    || Global.IgnorePathsContaining.Any(x => nonFullNameInvariant.Contains(x))
+                )
+                {
+                    continue;
+                }
+
+
+                var subDirFileInfos = ProcessSubDirs(dirInfo, searchPattern, recursionLevel + 1);
+                foreach (var subDirFileInfo in subDirFileInfos)
+                {
+                    yield return subDirFileInfo;
+                }
+            }   //foreach (var dirInfo in dirInfos)
+#endif
+        }   //private static IEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, bool forHistory, int recursionLevel = 0)
         private static void WriteException(Exception ex)
         {
             if (ex is AggregateException aggex)
@@ -445,7 +503,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static bool NeedsUpdate(string fullName)
         {
             if (DoingInitialSync)
+            {
                 return true;
+            }
 
             var converterSaveDate = GetBidirectionalConverterSaveDate(fullName);
             var fileTime = GetFileTime(fullName);

@@ -27,8 +27,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
     {
         public static IConfigurationRoot Configuration;
 
-        public static string WatchedCodeExtension = "cs";
-        public static string WatchedResXExtension = "resx";
+        public static List<string> WatchedCodeExtension = new List<string>() { "cs" };
+        public static List<string> WatchedResXExtension = new List<string>() { "resx" };
 
         public static List<string> ExcludedExtensions = new List<string>() { "*~", "tmp" };
         public static List<string> IgnorePathsStartingWith = new List<string>();
@@ -114,8 +114,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             Global.AsyncPath = fileConfig["AsyncPath"];
             Global.SyncPath = fileConfig["SyncPath"];
 
-            Global.WatchedCodeExtension = fileConfig["WatchedCodeExtension"];
-            Global.WatchedResXExtension = fileConfig["WatchedResXExtension"];
+            Global.WatchedCodeExtension = fileConfig.GetSection("WatchedCodeExtension").GetChildren().Select(c => c.Value.ToUpperInvariant()).ToList();
+            Global.WatchedResXExtension = fileConfig.GetSection("WatchedResXExtension").GetChildren().Select(c => c.Value.ToUpperInvariant()).ToList();
 
             //this would need Microsoft.Extensions.Configuration and Microsoft.Extensions.Configuration.Binder packages
             //Global.ExcludedExtensions = fileConfig.GetSection("ExcludedExtensions").Get<string[]>();
@@ -191,21 +191,19 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
                     //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
-                    foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.SyncPath), "*." + Global.WatchedCodeExtension))
+                    foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.SyncPath), "*.*"))     //NB! use *.* in order to sync resx files also
                     {
-                        {
-                            await ConsoleWatch.OnAddedAsync
-                            (
-                                new DummyFileSystemEvent(fileInfo),
-                                new CancellationToken()
-                            );
-                        }
+                        await ConsoleWatch.OnAddedAsync
+                        (
+                            new DummyFileSystemEvent(fileInfo),
+                            new CancellationToken()
+                        );
                     }
 
                     if (Global.Bidirectional)
                     {
                         //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
-                        foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.AsyncPath), "*." + Global.WatchedCodeExtension))
+                        foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.AsyncPath), "*.*"))     //NB! use *.* in order to sync resx files also
                         {
                             await ConsoleWatch.OnAddedAsync
                             (
@@ -535,9 +533,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 var otherFullName = GetOtherFullName(fullName);
                 using (await Global.FileOperationLocks.LockAsync(fullName, otherFullName, context.Token))
                 {
+                    var fullNameInvariant = fullName.ToUpperInvariant();
+
                     if (
-                        fullName.EndsWith("." + Global.WatchedCodeExtension)
-                        || Global.WatchedCodeExtension == "*"
+                        Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x.ToUpperInvariant()))
+                        || Global.WatchedCodeExtension.Contains("*")
                     )
                     {
                         if (fullName.ToUpperInvariant().StartsWith(Global.AsyncPath.ToUpperInvariant()))
@@ -604,10 +604,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             if (
                 (
-                    fullNameInvariant.EndsWith("." + Global.WatchedCodeExtension.ToUpperInvariant())
-                    || fullNameInvariant.EndsWith("." + Global.WatchedResXExtension.ToUpperInvariant())
-                    || Global.WatchedCodeExtension == "*"
-                    || Global.WatchedResXExtension == "*"
+                    Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x.ToUpperInvariant()))
+                    || Global.WatchedResXExtension.Any(x => fullNameInvariant.EndsWith("." + x.ToUpperInvariant()))
+                    || Global.WatchedCodeExtension.Contains("*")
+                    || Global.WatchedResXExtension.Contains("*")
                 )
                 && 
                 Global.ExcludedExtensions.All(x =>
@@ -812,7 +812,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             //NB! detect whether the file actually changed
             var otherFileData = File.Exists(otherFullName)
                 //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                ? await FileExtensions.ReadAllTextAsync(@"\\?\" + otherFullName, context.Token) 
+                ? await FileExtensions.ReadAllTextAsync(@"\\?\" + otherFullName, context.Token)     //TODO: optimisation: no need to read the bytes in case the file lenghts are different
                 : null;
 
             if (
@@ -861,7 +861,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             //NB! detect whether the file actually changed
             var otherFileData = File.Exists(otherFullName)
                 //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                ? await FileExtensions.ReadAllBytesAsync(@"\\?\" + otherFullName, context.Token)
+                ? await FileExtensions.ReadAllBytesAsync(@"\\?\" + otherFullName, context.Token)    //TODO: optimisation: no need to read the bytes in case the file lenghts are different
                 : null;
 
             if (

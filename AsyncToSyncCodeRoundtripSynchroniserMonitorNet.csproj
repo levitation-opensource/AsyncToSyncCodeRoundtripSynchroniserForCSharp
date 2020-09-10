@@ -155,6 +155,7 @@
   <ItemGroup>
     <Compile Include="AsyncToSyncConverter.cs" />
     <Compile Include="BinaryFileExtensions.cs" />
+    <Compile Include="ConfigParser.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="FileExtensions.cs" />
     <Compile Include="Program.cs" />
@@ -165,7 +166,9 @@
   <ItemGroup>
     <None Include="App.config" />
     <None Include="app.manifest" />
-    <None Include="appsettings.example.json" />
+    <None Include="appsettings.example.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include="appsettings.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

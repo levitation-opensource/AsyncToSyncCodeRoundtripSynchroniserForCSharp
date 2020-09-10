@@ -109,25 +109,24 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             var fileConfig = config.GetSection("Files");
 
-            Global.Bidirectional = fileConfig["Bidirectional"]?.ToUpperInvariant() != "FALSE";   //default is true
+            Global.Bidirectional = fileConfig.GetTextUpper("Bidirectional") != "FALSE";   //default is true
 
-            Global.AsyncPath = fileConfig["AsyncPath"];
-            Global.SyncPath = fileConfig["SyncPath"];
+            Global.AsyncPath = fileConfig.GetTextUpperOnWindows("AsyncPath");
+            Global.SyncPath = fileConfig.GetTextUpperOnWindows("SyncPath");
 
-            Global.WatchedCodeExtension = fileConfig.GetSection("WatchedCodeExtension").GetChildren().Select(c => c.Value.ToUpperInvariant()).ToList();
-            Global.WatchedResXExtension = fileConfig.GetSection("WatchedResXExtension").GetChildren().Select(c => c.Value.ToUpperInvariant()).ToList();
+            Global.WatchedCodeExtension = fileConfig.GetListUpperOnWindows("WatchedCodeExtensions", "WatchedCodeExtension");
+            Global.WatchedResXExtension = fileConfig.GetListUpperOnWindows("WatchedResXExtensions", "WatchedResXExtension");
 
             //this would need Microsoft.Extensions.Configuration and Microsoft.Extensions.Configuration.Binder packages
-            //Global.ExcludedExtensions = fileConfig.GetSection("ExcludedExtensions").Get<string[]>();
-            Global.ExcludedExtensions = fileConfig.GetSection("ExcludedExtensions").GetChildren().Select(c => c.Value.ToUpperInvariant()).ToList();   //NB! .ToUpperInvariant()
+            Global.ExcludedExtensions = fileConfig.GetListUpperOnWindows("ExcludedExtensions", "ExcludedExtension");   //NB! UpperOnWindows
 
-            Global.IgnorePathsStartingWith = fileConfig.GetSection("IgnorePathsStartingWith").GetChildren().Select(c => c.Value.ToUpperInvariant()).ToList();   //NB! .ToUpperInvariant()
-            Global.IgnorePathsContaining = fileConfig.GetSection("IgnorePathsContaining").GetChildren().Select(c => c.Value.ToUpperInvariant()).ToList();   //NB! .ToUpperInvariant()
+            Global.IgnorePathsStartingWith = fileConfig.GetListUpperOnWindows("IgnorePathsStartingWith", "IgnorePathStartingWith");   //NB! UpperOnWindows
+            Global.IgnorePathsContaining = fileConfig.GetListUpperOnWindows("IgnorePathsContaining", "IgnorePathContaining");   //NB! UpperOnWindows
 
 
             var pathHashes = "";
-            pathHashes += "_" + GetHashString(Global.AsyncPath.ToUpperInvariant());
-            pathHashes += "_" + GetHashString(Global.SyncPath.ToUpperInvariant());
+            pathHashes += "_" + GetHashString(Global.AsyncPath);
+            pathHashes += "_" + GetHashString(Global.SyncPath);
 
             //NB! prevent multiple instances from starting on same directories
             using (Mutex mutex = new Mutex(false, "Global\\AsyncToSyncCodeRoundtripSynchroniserMonitor_" + pathHashes))
@@ -414,11 +413,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static string GetNonFullName(string fullName)
         {
-            if (fullName.ToUpperInvariant().StartsWith(Global.AsyncPath.ToUpperInvariant()))
+            var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
+
+            if (fullNameInvariant.StartsWith(Global.AsyncPath))
             {
                 return fullName.Substring(Global.AsyncPath.Length);
             }
-            else if (fullName.ToUpperInvariant().StartsWith(Global.SyncPath.ToUpperInvariant()))
+            else if (fullNameInvariant.StartsWith(Global.SyncPath))
             {
                 return fullName.Substring(Global.SyncPath.Length);
             }
@@ -430,13 +431,14 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static string GetOtherFullName(string fullName)
         {
+            var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
             var nonFullName = GetNonFullName(fullName);
 
-            if (fullName.ToUpperInvariant().StartsWith(Global.AsyncPath.ToUpperInvariant()))
+            if (fullNameInvariant.StartsWith(Global.AsyncPath))
             {
                 return Path.Combine(Global.SyncPath, nonFullName);
             }
-            else if (fullName.ToUpperInvariant().StartsWith(Global.SyncPath.ToUpperInvariant()))
+            else if (fullNameInvariant.StartsWith(Global.SyncPath))
             {
                 return Path.Combine(Global.AsyncPath, nonFullName);
             }
@@ -533,18 +535,18 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 var otherFullName = GetOtherFullName(fullName);
                 using (await Global.FileOperationLocks.LockAsync(fullName, otherFullName, context.Token))
                 {
-                    var fullNameInvariant = fullName.ToUpperInvariant();
+                    var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
 
                     if (
-                        Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x.ToUpperInvariant()))
+                        Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x))
                         || Global.WatchedCodeExtension.Contains("*")
                     )
                     {
-                        if (fullName.ToUpperInvariant().StartsWith(Global.AsyncPath.ToUpperInvariant()))
+                        if (fullNameInvariant.StartsWith(Global.AsyncPath))
                         {
                             await AsyncToSyncConverter.AsyncFileUpdated(fullName, context);
                         }
-                        else if (fullName.ToUpperInvariant().StartsWith(Global.SyncPath.ToUpperInvariant()))     //NB!
+                        else if (fullNameInvariant.StartsWith(Global.SyncPath))     //NB!
                         {
                             await SyncToAsyncConverter.SyncFileUpdated(fullName, context);
                         }
@@ -600,12 +602,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         private static bool IsWatchedFile(string fullName)
         {
-            var fullNameInvariant = fullName.ToUpperInvariant();
+            var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
 
             if (
                 (
-                    Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x.ToUpperInvariant()))
-                    || Global.WatchedResXExtension.Any(x => fullNameInvariant.EndsWith("." + x.ToUpperInvariant()))
+                    Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x))
+                    || Global.WatchedResXExtension.Any(x => fullNameInvariant.EndsWith("." + x))
                     || Global.WatchedCodeExtension.Contains("*")
                     || Global.WatchedResXExtension.Contains("*")
                 )

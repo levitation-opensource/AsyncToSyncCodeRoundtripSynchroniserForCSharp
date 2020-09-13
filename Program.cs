@@ -979,19 +979,24 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }   //public static async Task SaveFileModifications(string fullName, byte[] fileData, byte[] originalData, Context context)
 
-        public static long CheckDiskSpace(string path)
+        public static long? CheckDiskSpace(string path)
         {
-            long freeBytes;
+            long? freeBytes = null;
 
-            if (!ConfigParser.IsWindows)
+            try     //NB! on some drives (for example, RAM drives, GetDiskFreeSpaceEx does not work
             {
                 //NB! DriveInfo works on paths well in Linux    //TODO: what about Mac?
                 var drive = new DriveInfo(path);
                 freeBytes = drive.AvailableFreeSpace;
             }
-            else
+            catch (ArgumentException)
             {
-                WindowsDllImport.GetDiskFreeSpaceEx(path, out freeBytes, out var _, out var __);
+                if (ConfigParser.IsWindows)
+                {
+                    long freeBytesOut;
+                    if (WindowsDllImport.GetDiskFreeSpaceEx(path, out freeBytesOut, out var _, out var __))
+                        freeBytes = freeBytesOut;
+                }
             }
 
             return freeBytes;

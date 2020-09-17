@@ -1,5 +1,5 @@
 ## Async to sync code roundtrip synchroniser for C#
-Automatically and in realtime converts asynchronous C# code in one folder to synchronous C# code in another folder for easier and faster debugging purposes. 
+Automatically and in realtime converts asynchronous C# code in one folder to synchronous C# code in another folder for easier and faster debugging purposes. Also, Visual Studio's edit-and-continue works much more often with synchronous code than with asynchronous code.
 
 You can also write your code in synchronous C# format and it will be automatically converted to asynchronous C# code in the background.
 

@@ -38,6 +38,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         private static readonly Regex AsyncLockReplaceRegex = new Regex(@"/[*]--using--[*]/\s*lock(\s*)[(]/[*]--await--[*]/\s+([^/*()-]+)/[*]--[.]Lock\sA\ss\sy\sn\sc[(][)]--[*]/\s*[)]", RegexOptions.Singleline | RegexOptions.Compiled);
         private const string AsyncLockReplaceRegexReplacement = @"using$1(await $2.LockAsync())";
 
+
+        private static readonly Regex FuncTaskReplaceRegex = new Regex(@"([\s,(]+)Func</[*]--Task<--[*]/([^=)]+)/[*]-->--[*]/>", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string FuncTaskReplaceRegexReplacement = @"$1Func<Task<$2>>";
+
+
         static SyncToAsyncConverter()
         {
             var asyncToSyncReplacements = AsyncToSyncConverter.Replacements.GetReverse();   //NB! use reverse order
@@ -72,6 +77,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 fileData = TaskDelayReplaceRegex.Replace(fileData, TaskDelayReplaceRegexReplacement);
                 fileData = TaskReplaceRegex.Replace(fileData, TaskReplaceRegexReplacement);
                 fileData = AsyncLockReplaceRegex.Replace(fileData, AsyncLockReplaceRegexReplacement);
+                fileData = FuncTaskReplaceRegex.Replace(fileData, FuncTaskReplaceRegexReplacement);
 
 
                 foreach (var replacement in Replacements)

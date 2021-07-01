@@ -22,6 +22,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static readonly List<KVP> Replacements = new List<KVP>()
         {
             //NB! VS may put the /*--await--*/ on a separate line therefore need handling for various space types after /*--await--*/
+            //TODO!: ensure that await starts at word boundary
             new KVP("await ", "/*--await--*/ "),
             new KVP("await\t", "/*--await--*/\t"),
             new KVP("await\r", "/*--await--*/\r"),
@@ -32,13 +33,22 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             new KVP(@" async Task ", @" /*--async Task--*/void "),
             //new KVP(@" async void ", @" /*--async void--*/void "),
+            new KVP(@" async IAsyncEnumerable", @" /*--async IAsyncEnumerable--*/IEnumerable"),
             new KVP(@" async ", @" /*--async--*/ "),
+
+            new KVP("(async ", "(/*--async--*/ "),
+            new KVP("(async\t", "(/*--async--*/\t"),
+            new KVP("(async\r", "(/*--async--*/\r"),
+            new KVP("(async\n", "(/*--async--*/\n"),
+
             new KVP(@" Task ", @" /*--Task--*/void "),  //method return type
             new KVP(@"Task ", @"/*--Task--*/Action "),  //method argument type
+            new KVP(@"Task<T> ", @"/*--Task<T>--*/Func<T> "),  //method argument type
 
             new KVP(@").Wait();", @")/*--.Wait()--*/;"),
             //new KVP("Task.Delay", "/*--Task.Delay--*/System.Threading.Thread.Sleep"),     //this needs special regex in sync to async direction
             new KVP(@"Task.FromResult", @"/*--Task.FromResult--*/"),
+            new KVP(@"Task.WhenAll", @"/*--Task.WhenAll--*/"),
             new KVP(@" AsyncLock", @" /*--AsyncLock--*/object"),    
 
             new KVP(@"#define ASYNC", @"#define NOASYNC"),
@@ -53,12 +63,16 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         private const string TaskDelayReplaceRegexReplacement = @"/*--Task.Delay--*/System.Threading.Thread.Sleep";
 
 
-        private static readonly Regex TaskReplaceRegex = new Regex(@"(\s+)(async\s+)?Task<([^ (]+)>(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
+        private static readonly Regex TaskReplaceRegex = new Regex(@"(\s+)(async\s+)?Task<([^(]+)>(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
         private const string TaskReplaceRegexReplacement = @"$1/*--$2Task<--*/$3/*-->--*/$4";
 
 
         private static readonly Regex AsyncLockReplaceRegex = new Regex(@"using([^(]*)[(]await(\s+[^(]+)[.]LockAsync[(][)][)]", RegexOptions.Singleline | RegexOptions.Compiled);
         private const string AsyncLockReplaceRegexReplacement = @"/*--using--*/lock$1(/*--await--*/ $2/*--.Lock A s y n c()--*/)";
+
+
+        private static readonly Regex FuncTaskReplaceRegex = new Regex(@"([\s,(]+)Func<Task<([^=)]+)>>", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string FuncTaskReplaceRegexReplacement = @"$1Func</*--Task<--*/$2/*-->--*/>";
 
 
         public static async Task AsyncFileUpdated(string fullName, Context context)
@@ -71,6 +85,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
 
+                fileData = FuncTaskReplaceRegex.Replace(fileData, FuncTaskReplaceRegexReplacement);
                 fileData = AsyncLockReplaceRegex.Replace(fileData, AsyncLockReplaceRegexReplacement);
                 fileData = TaskReplaceRegex.Replace(fileData, TaskReplaceRegexReplacement);
                 fileData = TaskDelayReplaceRegex.Replace(fileData, TaskDelayReplaceRegexReplacement);

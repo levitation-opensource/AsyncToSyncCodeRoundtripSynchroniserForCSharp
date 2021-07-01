@@ -17,9 +17,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using Microsoft.Extensions.Configuration;
 using myoddweb.directorywatcher;
 using myoddweb.directorywatcher.interfaces;
+using Nito.AsyncEx;
 
 namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
@@ -45,7 +47,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
 
-        internal static readonly AsyncLockQueueDictionary FileOperationLocks = new AsyncLockQueueDictionary();
+        internal static readonly AsyncLockQueueDictionary<string> FileOperationLocks = new AsyncLockQueueDictionary<string>();
         //internal static readonly AsyncLock FileOperationAsyncLock = new AsyncLock();
     }
 #pragma warning restore S2223
@@ -227,7 +229,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
                     //listen for the Ctrl+C 
-                    WaitForCtrlC();
+                    await WaitForCtrlC();
 
                     Console.WriteLine("Stopping...");
 
@@ -241,7 +243,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
             catch (Exception ex)
             {
-                WriteException(ex);
+                await WriteException(ex);
             }
         }
 
@@ -306,36 +308,75 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }   //foreach (var dirInfo in dirInfos)
 #endif
         }   //private static IEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, bool forHistory, int recursionLevel = 0)
-        private static void WriteException(Exception ex)
+        private static async Task WriteException(Exception ex)
         {
             if (ex is AggregateException aggex)
             {
-                WriteException(aggex.InnerException);
+                await WriteException(aggex.InnerException);
                 foreach (var aggexInner in aggex.InnerExceptions)
                 {
-                    WriteException(aggexInner);
+                    await WriteException(aggexInner);
                 }
                 return;
             }
 
-            Console.WriteLine(ex.Message);
+            //Console.WriteLine(ex.Message);
+            StringBuilder message = new StringBuilder(ex.Message);
             while (ex.InnerException != null)
             {
                 ex = ex.InnerException;
-                Console.WriteLine(ex.Message);
+                //Console.WriteLine(ex.Message);
+                message.Append(Environment.NewLine + ex.Message);
             }
+
+
+            var time = DateTime.Now;
+            var msg = $"[{time:yyyy.MM.dd HH:mm:ss.ffff}]:{message}";
+            await AddMessage(ConsoleColor.Red, msg, time, showAlert: true);
         }
 
-        private static void WaitForCtrlC()
+        private static async Task AddMessage(ConsoleColor color, string message, DateTime time, bool showAlert = false)
         {
-            var exitEvent = new ManualResetEvent(false);
+            await Task.Run(() =>
+            {
+                lock (ConsoleWatch.Lock)
+                {
+                    try
+                    {
+                        Console.ForegroundColor = color;
+                        Console.WriteLine(message);
+
+                        if (
+                            showAlert
+                            && (ConsoleWatch.PrevAlertTime != time || ConsoleWatch.PrevAlertMessage != message)
+                        )
+                        {
+                            MessageBox.Show(message, "AsyncToSyncCodeRoundtripSynchroniserMonitor");
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine(e.Message);
+                    }
+                    finally
+                    {
+                        Console.ForegroundColor = ConsoleWatch._consoleColor;
+                    }
+                }
+            });
+        }
+
+        private static Task WaitForCtrlC()
+        {
+            var exitEvent = new AsyncManualResetEvent(false);
             Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
             {
                 e.Cancel = true;
                 Console.WriteLine("Stop detected.");
                 exitEvent.Set();
             };
-            exitEvent.WaitOne();
+            return exitEvent.WaitAsync();
         }
     }
 
@@ -368,20 +409,23 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         /// <summary>
         /// The original console color
         /// </summary>
-        private static readonly ConsoleColor _consoleColor = Console.ForegroundColor;
+        internal static readonly ConsoleColor _consoleColor = Console.ForegroundColor;
 
         /// <summary>
         /// We need a static lock so it is shared by all.
         /// </summary>
-        private static readonly object Lock = new object();
+        internal static readonly object Lock = new object();
         //private static readonly AsyncLock AsyncLock = new AsyncLock();  //TODO: use this
+
+        internal static DateTime PrevAlertTime;
+        internal static string PrevAlertMessage;
 
 #pragma warning disable S2223   //Warning	S2223	Change the visibility of 'DoingInitialSync' or make it 'const' or 'readonly'.
         public static bool DoingInitialSync = false;
 #pragma warning restore S2223
 
         private static ConcurrentDictionary<string, DateTime> BidirectionalConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
-        private static readonly AsyncLockQueueDictionary FileEventLocks = new AsyncLockQueueDictionary();
+        private static readonly AsyncLockQueueDictionary<string> FileEventLocks = new AsyncLockQueueDictionary<string>();
 
 
 #pragma warning disable S1118   //Warning	S1118	Hide this public constructor by making it 'protected'.
@@ -422,7 +466,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 message.Append(Environment.NewLine + ex.Message);
             }
 
-            await AddMessage(ConsoleColor.Red, message.ToString(), context);
+
+            var msg = $"[{context.Time.ToLocalTime():yyyy.MM.dd HH:mm:ss.ffff}] : {context.Event?.FullName} : {message}";
+            await AddMessage(ConsoleColor.Red, msg, context, showAlert: true);
         }
 
         public static bool IsSyncPath(string fullNameInvariant)
@@ -836,7 +882,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         //    }
         //}
 
-        public static async Task AddMessage(ConsoleColor color, string message, Context context)
+        public static async Task AddMessage(ConsoleColor color, string message, Context context, bool showAlert = false)
         {
             await Task.Run(() =>
             {
@@ -846,7 +892,18 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     try
                     {
                         Console.ForegroundColor = color;
-                        Console.WriteLine($"[{context.Time.ToLocalTime():yyyy.MM.dd HH:mm:ss.ffff}]:{message}");
+                        Console.WriteLine(message);
+
+                        if (
+                            showAlert
+                            && (PrevAlertTime != context.Time || PrevAlertMessage != message)
+                        )
+                        {
+                            PrevAlertTime = context.Time;
+                            PrevAlertMessage = message;
+
+                            MessageBox.Show(message, "AsyncToSyncCodeRoundtripSynchroniserMonitor");
+                        }
                     }
                     catch (Exception e)
                     {

@@ -45,5 +45,20 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             return result;
         }
+
+        public static string GetLongPath(string path)
+        {
+            //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7 and https://superuser.com/questions/1617012/support-of-the-unc-server-share-syntax-in-windows
+
+            if (path.Substring(0, 2) == @"\\")   //network path
+            {
+                //return @"\\?\UNC" + path.Substring(1);
+                return path;
+            }
+            else
+            {
+                return @"\\?\" + path;
+            }
+        }
     }
 }

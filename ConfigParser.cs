@@ -17,9 +17,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static readonly bool IsLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
         public static readonly bool IsMacOS = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
 
-        public static string ToUpperInvariantOnWindows(this string text)
+        public static string ToUpperInvariantOnWindows(this string text, bool? caseSensitiveFilenames)
         {
-            if (IsWindows)  //assume NTFS or FAT filesystem which are usually case-insensitive
+            if (caseSensitiveFilenames == false || (caseSensitiveFilenames == null && !IsLinux))  //Under Windows assume NTFS or FAT filesystem which are usually case-insensitive. Under Mac filesystems are also case-insensitive by default.
                 return text?.ToUpperInvariant();
             else
                 return text;
@@ -42,9 +42,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             return null;
         }
 
-        public static string GetTextUpperOnWindows(this IConfiguration config, params string[] sectionKeyAlternateNames)
+        public static string GetTextUpperOnWindows(this IConfiguration config, bool? caseSensitiveFilenames, params string[] sectionKeyAlternateNames)
         {
-            if (IsWindows)  //assume NTFS or FAT filesystem which are usually case-insensitive
+            if (caseSensitiveFilenames == false || (caseSensitiveFilenames == null && !IsLinux))  //assume NTFS or FAT filesystem which are usually case-insensitive
                 return config.GetTextUpper(sectionKeyAlternateNames);
             else
                 return config.GetText(sectionKeyAlternateNames);
@@ -67,9 +67,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             return null;
         }
 
-        public static List<string> GetListUpperOnWindows(this IConfiguration config, params string[] sectionKeyAlternateNames)
+        public static List<string> GetListUpperOnWindows(this IConfiguration config, bool? caseSensitiveFilenames, params string[] sectionKeyAlternateNames)
         {
-            if (IsWindows)  //assume NTFS or FAT filesystem which are usually case-insensitive
+            if (caseSensitiveFilenames == false || (caseSensitiveFilenames == null && !IsLinux))  //assume NTFS or FAT filesystem which are usually case-insensitive
                 return config.GetListUpper(sectionKeyAlternateNames);
             else
                 return config.GetList(sectionKeyAlternateNames);

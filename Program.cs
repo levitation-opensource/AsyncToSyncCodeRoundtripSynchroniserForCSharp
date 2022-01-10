@@ -30,7 +30,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
     {
         public static IConfigurationRoot Configuration;
 
-        public static List<string> WatchedCodeExtension = new List<string>() { "cs" };
+        public static List<string> WatchedCodeExtension = new List<string>() { "cs", "py" };
         public static List<string> WatchedResXExtension = new List<string>() { "resx" };
 
         public static List<string> ExcludedExtensions = new List<string>() { "*~", "tmp" };
@@ -44,6 +44,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static long SyncPathMinFreeSpace = 0;
 
         public static bool Bidirectional = true;
+        public static bool? CaseSensitiveFilenames = null;   //null: default behaviour depending on OS
 
 
 
@@ -117,20 +118,24 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             Global.Bidirectional = fileConfig.GetTextUpper("Bidirectional") != "FALSE";   //default is true
 
-            Global.AsyncPath = fileConfig.GetTextUpperOnWindows("AsyncPath");
-            Global.SyncPath = fileConfig.GetTextUpperOnWindows("SyncPath");
+            if (!string.IsNullOrWhiteSpace(fileConfig.GetTextUpper("CaseSensitiveFilenames")))
+                Global.CaseSensitiveFilenames = fileConfig.GetTextUpper("CaseSensitiveFilenames") == "TRUE";   //default is false
+
+
+            Global.AsyncPath = fileConfig.GetTextUpperOnWindows(Global.CaseSensitiveFilenames, "AsyncPath");
+            Global.SyncPath = fileConfig.GetTextUpperOnWindows(Global.CaseSensitiveFilenames, "SyncPath");
 
             Global.AsyncPathMinFreeSpace = fileConfig.GetLong("AsyncPathMinFreeSpace") ?? 0;
             Global.SyncPathMinFreeSpace = fileConfig.GetLong("SyncPathMinFreeSpace") ?? 0;
 
-            Global.WatchedCodeExtension = fileConfig.GetListUpperOnWindows("WatchedCodeExtensions", "WatchedCodeExtension");
-            Global.WatchedResXExtension = fileConfig.GetListUpperOnWindows("WatchedResXExtensions", "WatchedResXExtension");
+            Global.WatchedCodeExtension = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "WatchedCodeExtensions", "WatchedCodeExtension");
+            Global.WatchedResXExtension = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "WatchedResXExtensions", "WatchedResXExtension");
 
             //this would need Microsoft.Extensions.Configuration and Microsoft.Extensions.Configuration.Binder packages
-            Global.ExcludedExtensions = fileConfig.GetListUpperOnWindows("ExcludedExtensions", "ExcludedExtension");   //NB! UpperOnWindows
+            Global.ExcludedExtensions = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "ExcludedExtensions", "ExcludedExtension");   //NB! UpperOnWindows
 
-            Global.IgnorePathsStartingWith = fileConfig.GetListUpperOnWindows("IgnorePathsStartingWith", "IgnorePathStartingWith");   //NB! UpperOnWindows
-            Global.IgnorePathsContaining = fileConfig.GetListUpperOnWindows("IgnorePathsContaining", "IgnorePathContaining");   //NB! UpperOnWindows
+            Global.IgnorePathsStartingWith = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "IgnorePathsStartingWith", "IgnorePathStartingWith");   //NB! UpperOnWindows
+            Global.IgnorePathsContaining = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "IgnorePathsContaining", "IgnorePathContaining");   //NB! UpperOnWindows
 
 
             var pathHashes = "";
@@ -170,11 +175,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     //    }
                     //}
 
-                    watch.Add(new Request(Global.SyncPath, recursive: true));
+                    watch.Add(new Request(Extensions.GetLongPath(Global.SyncPath), recursive: true));
 
                     if (Global.Bidirectional)
                     {
-                        watch.Add(new Request(Global.AsyncPath, recursive: true));
+                        watch.Add(new Request(Extensions.GetLongPath(Global.AsyncPath), recursive: true));
                     }
 
 
@@ -200,7 +205,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
                     //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
-                    foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.SyncPath), "*.*"))     //NB! use *.* in order to sync resx files also
+                    foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(Global.SyncPath)), "*.*"))     //NB! use *.* in order to sync resx files also
                     {
                         await ConsoleWatch.OnAddedAsync
                         (
@@ -212,7 +217,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     if (Global.Bidirectional)
                     {
                         //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
-                        foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Global.AsyncPath), "*.*"))     //NB! use *.* in order to sync resx files also
+                        foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(Global.AsyncPath)), "*.*"))     //NB! use *.* in order to sync resx files also
                         {
                             await ConsoleWatch.OnAddedAsync
                             (
@@ -473,20 +478,20 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static bool IsSyncPath(string fullNameInvariant)
         {
-            return fullNameInvariant.StartsWith(Global.SyncPath);
+            return fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.SyncPath));
         }
 
         public static string GetNonFullName(string fullName)
         {
-            var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
+            var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
 
-            if (fullNameInvariant.StartsWith(Global.AsyncPath))
+            if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
             {
-                return fullName.Substring(Global.AsyncPath.Length);
+                return fullName.Substring(Extensions.GetLongPath(Global.AsyncPath).Length);
             }
             else if (IsSyncPath(fullNameInvariant))
             {
-                return fullName.Substring(Global.SyncPath.Length);
+                return fullName.Substring(Extensions.GetLongPath(Global.SyncPath).Length);
             }
             else
             {
@@ -496,10 +501,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static string GetOtherFullName(string fullName)
         {
-            var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
+            var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var nonFullName = GetNonFullName(fullName);
 
-            if (fullNameInvariant.StartsWith(Global.AsyncPath))
+            if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
             {
                 return Path.Combine(Global.SyncPath, nonFullName);
             }
@@ -517,6 +522,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             try
             {
+                fullName = Extensions.GetLongPath(fullName);
+
                 while (true)
                 {
                     context.Token.ThrowIfCancellationRequested();
@@ -600,14 +607,14 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 var otherFullName = GetOtherFullName(fullName);
                 using (await Global.FileOperationLocks.LockAsync(fullName, otherFullName, context.Token))
                 {
-                    var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
+                    var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
 
                     if (
                         Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x))
                         || Global.WatchedCodeExtension.Contains("*")
                     )
                     {
-                        if (fullNameInvariant.StartsWith(Global.AsyncPath))
+                        if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
                         {
                             await AsyncToSyncConverter.AsyncFileUpdated(fullName, context);
                         }
@@ -622,8 +629,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     }
                     else    //Assume ResX file
                     {
-                        //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                        var fileData = await FileExtensions.ReadAllBytesAsync(@"\\?\" + fullName, context.Token);
+                        var fileData = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(fullName), context.Token);
                         var originalData = fileData;
 
                         //save without transformations
@@ -637,7 +643,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             if (IsWatchedFile(fullName))
             {
-                if (!File.Exists(fullName))  //NB! verify that the file is still deleted
+                if (!File.Exists(Extensions.GetLongPath(fullName)))  //NB! verify that the file is still deleted
                 {
                     var otherFullName = GetOtherFullName(fullName);
 
@@ -654,6 +660,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             try
             {
+                fullName = Extensions.GetLongPath(fullName);
+
                 if (File.Exists(fullName))
                     return File.GetLastWriteTimeUtc(fullName);
                 else
@@ -665,9 +673,26 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
+        private static long GetFileSize(string fullName)
+        {
+            try
+            {
+                fullName = Extensions.GetLongPath(fullName);
+
+                if (File.Exists(fullName))
+                    return new FileInfo(fullName).Length;
+                else
+                    return -1;
+            }
+            catch (FileNotFoundException)    //the file might have been deleted in the meanwhile
+            {
+                return -1;
+            }
+        }
+
         private static bool IsWatchedFile(string fullName)
         {
-            var fullNameInvariant = fullName.ToUpperInvariantOnWindows();
+            var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
 
             if (
                 (
@@ -711,10 +736,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             //NB! create separate context to properly handle disk free space checks on cases where file is renamed from src path to dest path (not a recommended practice though!)
 
-            var previousFullNameInvariant = fse.PreviousFileSystemInfo.FullName.ToUpperInvariantOnWindows();
+            var previousFullNameInvariant = fse.PreviousFileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var previousContext = new Context(fse, token, isSyncPath: IsSyncPath(previousFullNameInvariant));
 
-            var newFullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows();
+            var newFullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var newContext = new Context(fse, token, isSyncPath: IsSyncPath(newFullNameInvariant));
 
             try
@@ -779,7 +804,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         private static async Task OnRemovedAsync(IFileSystemEvent fse, CancellationToken token)
         {
-            var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows();
+            var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant));
 
             try
@@ -809,7 +834,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static async Task OnAddedAsync(IFileSystemEvent fse, CancellationToken token)
         {
-            var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows();
+            var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant));
 
             try
@@ -839,14 +864,14 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         private static async Task OnTouchedAsync(IFileSystemEvent fse, CancellationToken token)
         {
-            var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows();
+            var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant));
 
             try
             {
                 if (
                     fse.IsFile
-                    && File.Exists(fse.FileSystemInfo.FullName)     //for some reason fse.IsFile is set even for folders
+                    && File.Exists(Extensions.GetLongPath(fse.FileSystemInfo.FullName))     //for some reason fse.IsFile is set even for folders
                 )
                 {
                     if (IsWatchedFile(fse.FileSystemInfo.FullName))
@@ -921,12 +946,14 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static async Task SaveFileModifications(string fullName, string fileData, string originalData, Context context)
         {
             var otherFullName = GetOtherFullName(fullName);
+            var otherFileLength = GetFileSize(otherFullName);
 
 
             //NB! detect whether the file actually changed
-            var otherFileData = File.Exists(otherFullName)
-                //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                ? await FileExtensions.ReadAllTextAsync(@"\\?\" + otherFullName, context.Token)     //TODO: optimisation: no need to read the bytes in case the file lenghts are different
+            var otherFileData = 
+                File.Exists(Extensions.GetLongPath(otherFullName))
+                    && otherFileLength == fileData.Length   //optimisation
+                ? await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(otherFullName), context.Token)     //TODO: optimisation: no need to read the bytes in case the file lenghts are different
                 : null;
 
             if (
@@ -936,7 +963,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             {
                 var minDiskFreeSpace = context.IsSyncPath ? Global.AsyncPathMinFreeSpace : Global.SyncPathMinFreeSpace;
                 var actualFreeSpace = minDiskFreeSpace > 0 ? CheckDiskSpace(otherFullName) : 0;
-                if (minDiskFreeSpace > actualFreeSpace)
+                if (minDiskFreeSpace > actualFreeSpace - fileData.Length)
                 {
                     await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {fullName} : minDiskFreeSpace > actualFreeSpace : {minDiskFreeSpace} > {actualFreeSpace}", context);
 
@@ -947,11 +974,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 await DeleteFile(otherFullName, context);
 
                 var otherDirName = Path.GetDirectoryName(otherFullName);
-                if (!Directory.Exists(otherDirName))
-                    Directory.CreateDirectory(otherDirName);
+                if (!Directory.Exists(Extensions.GetLongPath(otherDirName)))
+                    Directory.CreateDirectory(Extensions.GetLongPath(otherDirName));
 
-                //@"\\?\" prefix is needed for writing to long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                await FileExtensions.WriteAllTextAsync(@"\\?\" + otherFullName, fileData, context.Token);
+                await FileExtensions.WriteAllTextAsync(Extensions.GetLongPath(otherFullName), fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
                 BidirectionalConverterSavedFileDates[otherFullName] = now;
@@ -966,7 +992,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                 try
                 {
-                    File.SetLastWriteTimeUtc(otherFullName, now);
+                    File.SetLastWriteTimeUtc(Extensions.GetLongPath(otherFullName), now);
                 }
                 catch (Exception ex)
                 {
@@ -980,12 +1006,14 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static async Task SaveFileModifications(string fullName, byte[] fileData, byte[] originalData, Context context)
         {
             var otherFullName = GetOtherFullName(fullName);
+            var otherFileLength = GetFileSize(otherFullName);
 
 
             //NB! detect whether the file actually changed
-            var otherFileData = File.Exists(otherFullName)
-                //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                ? await FileExtensions.ReadAllBytesAsync(@"\\?\" + otherFullName, context.Token)    //TODO: optimisation: no need to read the bytes in case the file lenghts are different
+            var otherFileData = 
+                File.Exists(Extensions.GetLongPath(otherFullName))
+                    && otherFileLength == fileData.Length   //optimisation
+                ? await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(otherFullName), context.Token)    //TODO: optimisation: no need to read the bytes in case the file lenghts are different
                 : null;
 
             if (
@@ -995,7 +1023,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             {
                 var minDiskFreeSpace = context.IsSyncPath ? Global.AsyncPathMinFreeSpace : Global.SyncPathMinFreeSpace;
                 var actualFreeSpace = minDiskFreeSpace > 0 ? CheckDiskSpace(otherFullName) : 0;
-                if (minDiskFreeSpace > actualFreeSpace)
+                if (minDiskFreeSpace > actualFreeSpace - fileData.Length)
                 {
                     await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {fullName} : minDiskFreeSpace > actualFreeSpace : {minDiskFreeSpace} > {actualFreeSpace}", context);
 
@@ -1006,11 +1034,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 await DeleteFile(otherFullName, context);
 
                 var otherDirName = Path.GetDirectoryName(otherFullName);
-                if (!Directory.Exists(otherDirName))
-                    Directory.CreateDirectory(otherDirName);
+                if (!Directory.Exists(Extensions.GetLongPath(otherDirName)))
+                    Directory.CreateDirectory(Extensions.GetLongPath(otherDirName));
 
-                //@"\\?\" prefix is needed for writing to long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                await FileExtensions.WriteAllBytesAsync(@"\\?\" + otherFullName, fileData, context.Token);
+                await FileExtensions.WriteAllBytesAsync(Extensions.GetLongPath(otherFullName), fileData, context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
                 BidirectionalConverterSavedFileDates[otherFullName] = now;
@@ -1025,7 +1052,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                 try
                 {
-                    File.SetLastWriteTimeUtc(otherFullName, now);
+                    File.SetLastWriteTimeUtc(Extensions.GetLongPath(otherFullName), now);
                 }
                 catch (Exception ex)
                 {

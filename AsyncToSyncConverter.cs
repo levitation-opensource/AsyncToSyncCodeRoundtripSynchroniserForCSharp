@@ -19,7 +19,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
     static class AsyncToSyncConverter
     {
         //TODO config file
-        public static readonly List<KVP> Replacements = new List<KVP>()
+        public static readonly List<KVP> CS_Replacements = new List<KVP>()
         {
             //NB! VS may put the /*--await--*/ on a separate line therefore need handling for various space types after /*--await--*/
             //TODO!: ensure that await starts at word boundary
@@ -41,15 +41,18 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             new KVP("(async\r", "(/*--async--*/\r"),
             new KVP("(async\n", "(/*--async--*/\n"),
 
+            new KVP(@", Task ", @", /*--Task--*/Action "),  //method argument type
+            new KVP(@"(Task ", @"(/*--Task--*/Action "),  //method argument type
+            new KVP(@", Task<T> ", @", /*--Task<T>--*/Func<T> "),  //method argument type
+            new KVP(@"(Task<T> ", @"(/*--Task<T>--*/Func<T> "),  //method argument type
             new KVP(@" Task ", @" /*--Task--*/void "),  //method return type
-            new KVP(@"Task ", @"/*--Task--*/Action "),  //method argument type
-            new KVP(@"Task<T> ", @"/*--Task<T>--*/Func<T> "),  //method argument type
 
             new KVP(@").Wait();", @")/*--.Wait()--*/;"),
             //new KVP("Task.Delay", "/*--Task.Delay--*/System.Threading.Thread.Sleep"),     //this needs special regex in sync to async direction
             new KVP(@"Task.FromResult", @"/*--Task.FromResult--*/"),
             new KVP(@"Task.WhenAll", @"/*--Task.WhenAll--*/"),
-            new KVP(@" AsyncLock", @" /*--AsyncLock--*/object"),    
+            new KVP(@" AsyncLock ", @" /*--AsyncLock--*/object "),      //TODO!!! add handling for \t \r \n 
+            new KVP(@" AsyncLock(", @" /*--AsyncLock--*/object("), 
 
             new KVP(@"#define ASYNC", @"#define NOASYNC"),
         };
@@ -59,47 +62,96 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         //private static readonly string AsyncLockReplaceRegexReplacement = @"$1/*--AsyncLock--*/object";
 
 
-        private static readonly Regex TaskDelayReplaceRegex = new Regex(@"Task[.]Delay", RegexOptions.Singleline | RegexOptions.Compiled);
-        private const string TaskDelayReplaceRegexReplacement = @"/*--Task.Delay--*/System.Threading.Thread.Sleep";
+        private static readonly Regex CS_TaskDelayReplaceRegex = new Regex(@"Task[.]Delay", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string CS_TaskDelayReplaceRegexReplacement = @"/*--Task.Delay--*/System.Threading.Thread.Sleep";
 
 
-        private static readonly Regex TaskReplaceRegex = new Regex(@"(\s+)(async\s+)?Task<([^(]+)>(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
-        private const string TaskReplaceRegexReplacement = @"$1/*--$2Task<--*/$3/*-->--*/$4";
+        private static readonly Regex CS_TaskReplaceRegex = new Regex(@"(\s+)(async\s+)?Task<([^(]+)>(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string CS_TaskReplaceRegexReplacement = @"$1/*--$2Task<--*/$3/*-->--*/$4";
 
 
-        private static readonly Regex AsyncLockReplaceRegex = new Regex(@"using([^(]*)[(]await(\s+[^(]+)[.]LockAsync[(][)][)]", RegexOptions.Singleline | RegexOptions.Compiled);
-        private const string AsyncLockReplaceRegexReplacement = @"/*--using--*/lock$1(/*--await--*/ $2/*--.Lock A s y n c()--*/)";
+        private static readonly Regex CS_AsyncLockReplaceRegex = new Regex(@"using([^(]*)[(]await(\s+[^(]+)[.]LockAsync[(][)][)]", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string CS_AsyncLockReplaceRegexReplacement = @"/*--using--*/lock$1(/*--await--*/ $2/*--.Lock A s y n c()--*/)";
 
 
-        private static readonly Regex FuncTaskReplaceRegex = new Regex(@"([\s,(]+)Func<Task<([^=)]+)>>", RegexOptions.Singleline | RegexOptions.Compiled);
-        private const string FuncTaskReplaceRegexReplacement = @"$1Func</*--Task<--*/$2/*-->--*/>";
+        private static readonly Regex CS_FuncTaskReplaceRegex = new Regex(@"([\s,(]+)Func<Task<([^=)]+)>>", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string CS_FuncTaskReplaceRegexReplacement = @"$1Func</*--Task<--*/$2/*-->--*/>";
+
+
+
+
+        public static readonly List<KVP> PY_Replacements = new List<KVP>()
+        {
+            //TODO!: ensure that matches start at word boundary    
+
+            new KVP(@"ASYNC = True", @"ASYNC = False"),
+            new KVP(@"NOASYNC = False", @"NOASYNC = True"),
+
+            new KVP(" aiofiles.open", " open"),
+            new KVP("\taiofiles.open", "\topen"),
+            new KVP("\raiofiles.open", "\ropen"),
+            new KVP("\naiofiles.open", "\nopen"),
+
+            new KVP(" open", " io.open"),
+            new KVP("\topen", "\tio.open"),
+            new KVP("\ropen", "\rio.open"),
+            new KVP("\nopen", "\nio.open"),
+        };
+
+
+        private static readonly Regex PY_AwaitReplaceRegex = new Regex(@"(\n\r|\r\n|\n)(\s*)await(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string PY_AwaitReplaceRegexReplacement = @"$1#--$2await$3--$1";
+
+
+        private static readonly Regex PY_Await2ReplaceRegex = new Regex(@"=(\s*)await(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string PY_Await2ReplaceRegexReplacement = @"=#--$1await$2--$1";
+
+
+        private static readonly Regex PY_AsyncReplaceRegex = new Regex(@"(\n\r|\r\n|\n)(\s*)async(\s+)", RegexOptions.Singleline | RegexOptions.Compiled);
+        private const string PY_AsyncRegexReplacement = @"$1#--$2async$3--$2";
+
+
 
 
         public static async Task AsyncFileUpdated(string fullName, Context context)
         {
             //using (await Global.FileOperationAsyncLock.LockAsync())
             {
-                //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7
-                var fileData = await FileExtensions.ReadAllTextAsync(@"\\?\" + fullName, context.Token);
+                var fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(fullName), context.Token);
                 var originalData = fileData;
 
 
-
-                fileData = FuncTaskReplaceRegex.Replace(fileData, FuncTaskReplaceRegexReplacement);
-                fileData = AsyncLockReplaceRegex.Replace(fileData, AsyncLockReplaceRegexReplacement);
-                fileData = TaskReplaceRegex.Replace(fileData, TaskReplaceRegexReplacement);
-                fileData = TaskDelayReplaceRegex.Replace(fileData, TaskDelayReplaceRegexReplacement);
-
-
-                foreach (var replacement in Replacements)
+                if (fullName.EndsWith(".cs"))
                 {
-                    fileData = fileData.Replace(replacement.Item1, replacement.Item2);
+                    foreach (var replacement in CS_Replacements)
+                    {
+                        fileData = fileData.Replace(replacement.Item1, replacement.Item2);
+                    }
+
+                    fileData = CS_FuncTaskReplaceRegex.Replace(fileData, CS_FuncTaskReplaceRegexReplacement);
+                    fileData = CS_AsyncLockReplaceRegex.Replace(fileData, CS_AsyncLockReplaceRegexReplacement);
+                    fileData = CS_TaskReplaceRegex.Replace(fileData, CS_TaskReplaceRegexReplacement);
+                    fileData = CS_TaskDelayReplaceRegex.Replace(fileData, CS_TaskDelayReplaceRegexReplacement);
+                }
+                else if (fullName.EndsWith(".py"))
+                {
+                    foreach (var replacement in PY_Replacements)
+                    {
+                        fileData = fileData.Replace(replacement.Item1, replacement.Item2);
+                    }
+
+                    fileData = PY_AwaitReplaceRegex.Replace(fileData, PY_AwaitReplaceRegexReplacement);
+                    fileData = PY_AsyncReplaceRegex.Replace(fileData, PY_AsyncRegexReplacement);
+                }
+                else
+                {
+                    throw new NotImplementedException("Unknown file extension");
                 }
 
 
                 await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
 
             }   //using (await Global.FileOperationAsyncLock.LockAsync())
-        }
+        }   //public static async Task AsyncFileUpdated(string fullName, Context context)
     }
 }

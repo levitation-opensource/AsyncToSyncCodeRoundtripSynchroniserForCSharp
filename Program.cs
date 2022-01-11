@@ -50,6 +50,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         internal static readonly AsyncLockQueueDictionary<string> FileOperationLocks = new AsyncLockQueueDictionary<string>();
         //internal static readonly AsyncLock FileOperationAsyncLock = new AsyncLock();
+        internal static readonly AsyncSemaphore FileOperationSemaphore = new AsyncSemaphore(2);     //allow 2 concurrent file synchronisations: while one is finishing the write, the next one can start the read
     }
 #pragma warning restore S2223
 
@@ -607,35 +608,38 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 var otherFullName = GetOtherFullName(fullName);
                 using (await Global.FileOperationLocks.LockAsync(fullName, otherFullName, context.Token))
                 {
-                    var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-
-                    if (
-                        Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x))
-                        || Global.WatchedCodeExtension.Contains("*")
-                    )
+                    using (await Global.FileOperationSemaphore.LockAsync())
                     {
-                        if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
-                        {
-                            await AsyncToSyncConverter.AsyncFileUpdated(fullName, context);
-                        }
-                        else if (IsSyncPath(fullNameInvariant))     //NB!
-                        {
-                            await SyncToAsyncConverter.SyncFileUpdated(fullName, context);
-                        }
-                        else
-                        {
-                            throw new ArgumentException("fullName");
-                        }
-                    }
-                    else    //Assume ResX file
-                    {
-                        var fileData = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(fullName), context.Token);
-                        var originalData = fileData;
+                        var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
 
-                        //save without transformations
-                        await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
-                    }
-                }
+                        if (
+                            Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x))
+                            || Global.WatchedCodeExtension.Contains("*")
+                        )
+                        {
+                            if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
+                            {
+                                await AsyncToSyncConverter.AsyncFileUpdated(fullName, context);
+                            }
+                            else if (IsSyncPath(fullNameInvariant))     //NB!
+                            {
+                                await SyncToAsyncConverter.SyncFileUpdated(fullName, context);
+                            }
+                            else
+                            {
+                                throw new ArgumentException("fullName");
+                            }
+                        }
+                        else    //Assume ResX file
+                        {                        
+                            var fileData = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(fullName), context.Token);
+                            var originalData = fileData;
+
+                            //save without transformations
+                            await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
+                        }
+                    }   //using (await Global.FileOperationSemaphore.LockAsync())
+                }   //using (await Global.FileOperationLocks.LockAsync(fullName, otherFullName, context.Token))
             }
         }   //public static async Task FileUpdated(string fullName, Context context)
 

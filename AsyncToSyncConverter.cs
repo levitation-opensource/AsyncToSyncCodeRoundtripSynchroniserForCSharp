@@ -51,8 +51,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             //new KVP("Task.Delay", "/*--Task.Delay--*/System.Threading.Thread.Sleep"),     //this needs special regex in sync to async direction
             new KVP(@"Task.FromResult", @"/*--Task.FromResult--*/"),
             new KVP(@"Task.WhenAll", @"/*--Task.WhenAll--*/"),
-            new KVP(@" AsyncLock ", @" /*--AsyncLock--*/object "),      //TODO!!! add handling for \t \r \n 
-            new KVP(@" AsyncLock(", @" /*--AsyncLock--*/object("), 
+
+            //TODO: use Regex instead since the match beginning may also vary from space
+            new KVP(" AsyncLock ", " /*--AsyncLock--*/object "),      //TODO!!! add handling for \t \r \n 
+            new KVP(" AsyncLock(", " /*--AsyncLock--*/object("),
+            new KVP(" AsyncLock>", " /*--AsyncLock--*/object>"),
+            new KVP(" AsyncLock,", " /*--AsyncLock--*/object,"),
+            new KVP(" AsyncLock\t", " /*--AsyncLock--*/object\t"),
+            new KVP(" AsyncLock\r", " /*--AsyncLock--*/object\r"),
+            new KVP(" AsyncLock\n", " /*--AsyncLock--*/object\n"),
 
             new KVP(@"#define ASYNC", @"#define NOASYNC"),
         };

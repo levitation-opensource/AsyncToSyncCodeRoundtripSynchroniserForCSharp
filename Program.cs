@@ -10,6 +10,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -21,6 +22,7 @@ using System.Windows.Forms;
 using Microsoft.Extensions.Configuration;
 using myoddweb.directorywatcher;
 using myoddweb.directorywatcher.interfaces;
+using Nito.AspNetBackgroundTasks;
 using Nito.AsyncEx;
 
 namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
@@ -29,6 +31,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
     internal static class Global
     {
         public static IConfigurationRoot Configuration;
+        public static readonly CancellationTokenSource CancellationToken = new CancellationTokenSource();
 
         public static List<string> WatchedCodeExtension = new List<string>() { "cs", "py" };
         public static List<string> WatchedResXExtension = new List<string>() { "resx" };
@@ -54,35 +57,37 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
     }
 #pragma warning restore S2223
 
-    internal class Program
+    class DummyFileSystemEvent : IFileSystemEvent
     {
-        private class DummyFileSystemEvent : IFileSystemEvent
+        [DebuggerStepThrough]
+        public DummyFileSystemEvent(FileSystemInfo fileSystemInfo)
         {
-            public DummyFileSystemEvent(FileSystemInfo fileSystemInfo)
-            {
-                FileSystemInfo = fileSystemInfo;
-                FullName = fileSystemInfo.FullName;
-                Name = fileSystemInfo.Name;
-                Action = EventAction.Added;
-                Error = EventError.None;
-                DateTimeUtc = DateTime.UtcNow;
-                IsFile = true;
-            }
-
-            public FileSystemInfo FileSystemInfo { get; }
-            public string FullName { get; }
-            public string Name { get; }
-            public EventAction Action { get; }
-            public EventError Error { get; }
-            public DateTime DateTimeUtc { get; }
-            public bool IsFile { get; }
-
-            public bool Is(EventAction action)
-            {
-                return action == Action;
-            }
+            FileSystemInfo = fileSystemInfo;
+            FullName = fileSystemInfo.FullName;
+            Name = fileSystemInfo.Name;
+            Action = EventAction.Added;
+            Error = EventError.None;
+            DateTimeUtc = DateTime.UtcNow;
+            IsFile = true;
         }
 
+        public FileSystemInfo FileSystemInfo { [DebuggerStepThrough]get; }
+        public string FullName { [DebuggerStepThrough]get; }
+        public string Name { [DebuggerStepThrough]get; }
+        public EventAction Action { [DebuggerStepThrough]get; }
+        public EventError Error { [DebuggerStepThrough]get; }
+        public DateTime DateTimeUtc { [DebuggerStepThrough]get; }
+        public bool IsFile { [DebuggerStepThrough]get; }
+
+        [DebuggerStepThrough]
+        public bool Is(EventAction action)
+        {
+            return action == Action;
+        }
+    }
+
+    internal class Program
+    {
         private static byte[] GetHash(string inputString)
         {
 #pragma warning disable SCS0006     //Warning	SCS0006	Weak hashing function
@@ -167,15 +172,6 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 //start the monitor.
                 using (var watch = new Watcher())
                 {
-                    //var drvs = System.IO.DriveInfo.GetDrives();
-                    //foreach (var drv in drvs)
-                    //{
-                    //    if (drv.DriveType == System.IO.DriveType.Fixed)
-                    //    {
-                    //        watch.Add(new Request(drv.Name, true));
-                    //    }
-                    //}
-
                     watch.Add(new Request(Extensions.GetLongPath(Global.SyncPath), recursive: true));
 
                     if (Global.Bidirectional)
@@ -195,43 +191,27 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                     var messageContext = new Context(
                         eventObj: null,
-                        token: new CancellationToken(),
-                        isSyncPath: false   //unused here
+                        token: Global.CancellationToken.Token,
+                        isSyncPath: false,   //unused here
+                        isInitialScan: true
                     );
 
 
-                    await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", messageContext);
-                    ConsoleWatch.DoingInitialSync = true;   //NB!
-
-
-
-                    //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
-                    foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(Global.SyncPath)), "*.*"))     //NB! use *.* in order to sync resx files also
+                    BackgroundTaskManager.Run(async () =>
                     {
-                        await ConsoleWatch.OnAddedAsync
-                        (
-                            new DummyFileSystemEvent(fileInfo),
-                            new CancellationToken()
-                        );
-                    }
+                        await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", messageContext);
 
-                    if (Global.Bidirectional)
-                    {
-                        //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
-                        foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(Global.AsyncPath)), "*.*"))     //NB! use *.* in order to sync resx files also
+                        BackgroundTaskManager.Run(async () =>
                         {
-                            await ConsoleWatch.OnAddedAsync
-                            (
-                                new DummyFileSystemEvent(fileInfo),
-                                new CancellationToken()
-                            );
-                        }
-                    }
+                            await InitialSyncCountdownEvent.WaitAsync(Global.CancellationToken.Token);
 
+                            if (!Global.CancellationToken.IsCancellationRequested)
+                                await ConsoleWatch.AddMessage(ConsoleColor.White, "Done initial synchronisation...", messageContext);
+                        });
 
+                        await ScanFolders(isInitialScan: true);
 
-                    ConsoleWatch.DoingInitialSync = false;   //NB!
-                    await ConsoleWatch.AddMessage(ConsoleColor.White, "Done initial synchronisation...", messageContext);
+                    });     //BackgroundTaskManager.Run(async () =>
 
 
                     //listen for the Ctrl+C 
@@ -250,6 +230,42 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             catch (Exception ex)
             {
                 await WriteException(ex);
+            }
+        }   //private static async Task MainTask()
+
+        private static AsyncCountdownEvent InitialSyncCountdownEvent = new AsyncCountdownEvent(1);
+
+        private static async Task ScanFolders(bool isInitialScan)
+        {
+            //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
+            await ScanFolder(Global.SyncPath, "*.*", isInitialScan: isInitialScan);     //NB! use *.* in order to sync resx files also
+
+            if (Global.Bidirectional)
+            {
+                //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
+                await ScanFolder(Global.AsyncPath, "*.*", isInitialScan: isInitialScan);     //NB! use *.* in order to sync resx files also
+            }
+
+            if (isInitialScan)
+                InitialSyncCountdownEvent.Signal();
+        }
+
+        private static async Task ScanFolder(string path, string extension, bool isInitialScan)
+        {
+            foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(path)), extension))
+            {
+                if (isInitialScan)
+                    InitialSyncCountdownEvent.AddCount();
+
+                await ConsoleWatch.OnAddedAsync
+                (
+                    new DummyFileSystemEvent(fileInfo),
+                    Global.CancellationToken.Token,
+                    isInitialScan
+                );
+
+                if (isInitialScan)
+                    InitialSyncCountdownEvent.Signal();
             }
         }
 
@@ -378,6 +394,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             var exitEvent = new AsyncManualResetEvent(false);
             Console.CancelKeyPress += delegate (object sender, ConsoleCancelEventArgs e)
             {
+                Global.CancellationToken.Cancel();
                 e.Cancel = true;
                 Console.WriteLine("Stop detected.");
                 exitEvent.Set();
@@ -391,6 +408,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public readonly IFileSystemEvent Event;
         public readonly CancellationToken Token;
         public readonly bool IsSyncPath;
+        public readonly bool IsInitialScan;
 
         public DateTime Time
         {
@@ -401,12 +419,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         }
 
 #pragma warning disable CA1068  //should take CancellationToken as the last parameter
-        public Context(IFileSystemEvent eventObj, CancellationToken token, bool isSyncPath)
+        public Context(IFileSystemEvent eventObj, CancellationToken token, bool isSyncPath, bool isInitialScan)
 #pragma warning restore CA1068
         {
             Event = eventObj;
             Token = token;
             IsSyncPath = isSyncPath;
+            IsInitialScan = isInitialScan;
         }
     }
 
@@ -426,9 +445,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         internal static DateTime PrevAlertTime;
         internal static string PrevAlertMessage;
 
-#pragma warning disable S2223   //Warning	S2223	Change the visibility of 'DoingInitialSync' or make it 'const' or 'readonly'.
-        public static bool DoingInitialSync = false;
-#pragma warning restore S2223
+//#pragma warning disable S2223   //Warning	S2223	Change the visibility of 'DoingInitialSync' or make it 'const' or 'readonly'.
+//        public static bool DoingInitialSync = false;
+//#pragma warning restore S2223
 
         private static ConcurrentDictionary<string, DateTime> BidirectionalConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
         private static readonly AsyncLockQueueDictionary<string> FileEventLocks = new AsyncLockQueueDictionary<string>();
@@ -441,11 +460,25 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             //_consoleColor = Console.ForegroundColor;
 
             //watch.OnErrorAsync += OnErrorAsync;
-            watch.OnAddedAsync += OnAddedAsync;
+            watch.OnAddedAsync += (fse, token) => OnAddedAsync(fse, token, isInitialScan: false);
             watch.OnRemovedAsync += OnRemovedAsync;
             watch.OnRenamedAsync += OnRenamedAsync;
             watch.OnTouchedAsync += OnTouchedAsync;
         }
+
+#if false
+        private async Task OnErrorAsync(IEventError ee, CancellationToken token)
+        {
+            try
+            {
+                await AddMessage(ConsoleColor.Red, $"[!]:{ee.Message}", context);
+            }
+            catch (Exception ex)
+            {
+                await WriteException(ex, context);
+            }
+        }
+#endif
 
         public static async Task WriteException(Exception ex, Context context)
         {
@@ -573,23 +606,24 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             return converterSaveDate;
         }
 
-        public static bool NeedsUpdate(string fullName)
+        public static bool NeedsUpdate(Context context)
         {
-            if (DoingInitialSync)
+            if (context.IsInitialScan)
             {
                 return true;
             }
 
-            var converterSaveDate = GetBidirectionalConverterSaveDate(fullName);
-            var fileTime = GetFileTime(fullName);
+            var converterSaveDate = GetBidirectionalConverterSaveDate(context.Event.FullName);
+            var fileTime = context.Event.FileSystemInfo.LastWriteTimeUtc; //GetFileTime(context.Event.FullName);
 
             if (
                 !Global.Bidirectional   //no need to debounce BIDIRECTIONAL file save events when bidirectional save is disabled
                 || fileTime > converterSaveDate.AddSeconds(3)     //NB! ignore if the file changed during 3 seconds after converter save   //TODO!! config
             )
             {
-                var otherFullName = GetOtherFullName(fullName);
-                if (fileTime > GetFileTime(otherFullName))     //NB!
+                var otherFullName = GetOtherFullName(context.Event.FullName);
+                var otherFileTime = GetFileTime(otherFullName);
+                if (fileTime > otherFileTime)     //NB!
                 {
                     return true;
                 }
@@ -602,7 +636,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             if (
                 IsWatchedFile(fullName)
-                && NeedsUpdate(fullName)     //NB!
+                && NeedsUpdate(context)     //NB!
             )
             {
                 var otherFullName = GetOtherFullName(fullName);
@@ -741,10 +775,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             //NB! create separate context to properly handle disk free space checks on cases where file is renamed from src path to dest path (not a recommended practice though!)
 
             var previousFullNameInvariant = fse.PreviousFileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-            var previousContext = new Context(fse, token, isSyncPath: IsSyncPath(previousFullNameInvariant));
+            var previousContext = new Context(fse, token, isSyncPath: IsSyncPath(previousFullNameInvariant), isInitialScan: false);
 
             var newFullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-            var newContext = new Context(fse, token, isSyncPath: IsSyncPath(newFullNameInvariant));
+            var newContext = new Context(fse, token, isSyncPath: IsSyncPath(newFullNameInvariant), isInitialScan: false);
 
             try
             {
@@ -809,7 +843,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         private static async Task OnRemovedAsync(IFileSystemEvent fse, CancellationToken token)
         {
             var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-            var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant));
+            var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant), isInitialScan: false);
 
             try
             {
@@ -836,10 +870,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        public static async Task OnAddedAsync(IFileSystemEvent fse, CancellationToken token)
+        internal static async Task OnAddedAsync(IFileSystemEvent fse, CancellationToken token, bool isInitialScan)
         {
             var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-            var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant));
+            var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant), isInitialScan: isInitialScan);
 
             try
             {
@@ -847,7 +881,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 {
                     if (IsWatchedFile(fse.FileSystemInfo.FullName))
                     {
-                        //await AddMessage(ConsoleColor.Green, $"[{(fse.IsFile ? "F" : "D")}][+]:{fse.FileSystemInfo.FullName}", context);
+                        if (!context.IsInitialScan)
+                           await AddMessage(ConsoleColor.Green, $"[{(fse.IsFile ? "F" : "D")}][+]:{fse.FileSystemInfo.FullName}", context);
 
                         using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
                         {
@@ -869,22 +904,23 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         private static async Task OnTouchedAsync(IFileSystemEvent fse, CancellationToken token)
         {
             var fullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-            var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant));
+            var context = new Context(fse, token, isSyncPath: IsSyncPath(fullNameInvariant), isInitialScan: false);
 
             try
             {
-                if (
-                    fse.IsFile
-                    && File.Exists(Extensions.GetLongPath(fse.FileSystemInfo.FullName))     //for some reason fse.IsFile is set even for folders
-                )
+                if (fse.IsFile)
                 {
                     if (IsWatchedFile(fse.FileSystemInfo.FullName))
                     {
-                        await AddMessage(ConsoleColor.Gray, $"[{(fse.IsFile ? "F" : "D")}][T]:{fse.FileSystemInfo.FullName}", context);
-
-                        using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                        //check for file type only after checking IsWatchedFile first since file type checking might already be a slow operation
+                        if (File.Exists(Extensions.GetLongPath(fse.FileSystemInfo.FullName)))     //for some reason fse.IsFile is set even for folders
                         {
-                            await FileUpdated(fse.FileSystemInfo.FullName, context);
+                            await AddMessage(ConsoleColor.Gray, $"[{(fse.IsFile ? "F" : "D")}][T]:{fse.FileSystemInfo.FullName}", context);
+
+                            using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                            {
+                                await FileUpdated(fse.FileSystemInfo.FullName, context);
+                            }
                         }
                     }
                 }
@@ -898,18 +934,6 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 await WriteException(ex, context);
             }
         }
-
-        //private async Task OnErrorAsync(IEventError ee, CancellationToken token)
-        //{
-        //    try
-        //    { 
-        //        await AddMessage(ConsoleColor.Red, $"[!]:{ee.Message}", context);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        await WriteException(ex, context);
-        //    }
-        //}
 
         public static async Task AddMessage(ConsoleColor color, string message, Context context, bool showAlert = false)
         {

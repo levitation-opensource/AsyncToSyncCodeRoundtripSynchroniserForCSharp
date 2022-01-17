@@ -19,6 +19,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Dasync.Collections;
 using Microsoft.Extensions.Configuration;
 using myoddweb.directorywatcher;
 using myoddweb.directorywatcher.interfaces;
@@ -32,6 +33,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
     {
         public static IConfigurationRoot Configuration;
         public static readonly CancellationTokenSource CancellationToken = new CancellationTokenSource();
+
+
+
+        public static bool UseIdlePriority = false;
+
+        public static long MaxFileSizeMB = 2048;
+
 
         public static List<string> WatchedCodeExtension = new List<string>() { "cs", "py" };
         public static List<string> WatchedResXExtension = new List<string>() { "resx" };
@@ -122,6 +130,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             var fileConfig = config.GetSection("Files");
 
+
+            Global.UseIdlePriority = fileConfig.GetTextUpper("UseIdlePriority") == "TRUE";   //default is false
+
+
+            Global.MaxFileSizeMB = fileConfig.GetLong("MaxFileSizeMB") ?? Global.MaxFileSizeMB;
+
+
             Global.Bidirectional = fileConfig.GetTextUpper("Bidirectional") != "FALSE";   //default is true
 
             if (!string.IsNullOrWhiteSpace(fileConfig.GetTextUpper("CaseSensitiveFilenames")))
@@ -169,6 +184,30 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 //Console.WriteLine(Environment.Is64BitProcess ? "x64 version" : "x86 version");
                 Console.WriteLine("Press Ctrl+C to stop the monitors.");
 
+
+                if (Global.UseIdlePriority)
+                {
+                    try
+                    {
+                        var CurrentProcess = Process.GetCurrentProcess();
+                        CurrentProcess.PriorityClass = ProcessPriorityClass.Idle;
+                        CurrentProcess.PriorityBoostEnabled = false;
+
+                        if (ConfigParser.IsWindows)
+                        {
+                            WindowsDllImport.SetIOPriority(CurrentProcess.Handle, WindowsDllImport.PROCESSIOPRIORITY.PROCESSIOPRIORITY_VERY_LOW);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        Console.WriteLine("Unable to set idle priority.");
+                    }
+                }
+
+
+                ThreadPool.SetMaxThreads(16, 16);   //TODO: config
+
+
                 //start the monitor.
                 using (var watch = new Watcher())
                 {
@@ -201,15 +240,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     {
                         await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", messageContext);
 
+                        await ScanFolders(isInitialScan: true);
+
                         BackgroundTaskManager.Run(async () =>
                         {
                             await InitialSyncCountdownEvent.WaitAsync(Global.CancellationToken.Token);
 
-                            if (!Global.CancellationToken.IsCancellationRequested)
+                            //if (!Global.CancellationToken.IsCancellationRequested)
                                 await ConsoleWatch.AddMessage(ConsoleColor.White, "Done initial synchronisation...", messageContext);
                         });
-
-                        await ScanFolders(isInitialScan: true);
 
                     });     //BackgroundTaskManager.Run(async () =>
 
@@ -225,6 +264,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     Console.WriteLine("Exiting...");
 
                     GC.KeepAlive(consoleWatch);
+
+
+                    Environment.Exit(0);
                 }
             }
             catch (Exception ex)
@@ -233,7 +275,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }   //private static async Task MainTask()
 
-        private static AsyncCountdownEvent InitialSyncCountdownEvent = new AsyncCountdownEvent(1);
+        private static readonly AsyncCountdownEvent InitialSyncCountdownEvent = new AsyncCountdownEvent(1);
 
         private static async Task ScanFolders(bool isInitialScan)
         {
@@ -252,84 +294,103 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         private static async Task ScanFolder(string path, string extension, bool isInitialScan)
         {
-            foreach (var fileInfo in ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(path)), extension))
+            var fileInfos = ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(path)), extension);
+            await fileInfos.ForEachAsync(fileInfo => 
             {
                 if (isInitialScan)
                     InitialSyncCountdownEvent.AddCount();
 
-                await ConsoleWatch.OnAddedAsync
-                (
-                    new DummyFileSystemEvent(fileInfo),
-                    Global.CancellationToken.Token,
-                    isInitialScan
-                );
+                BackgroundTaskManager.Run(async () => 
+                {
+                    await ConsoleWatch.OnAddedAsync
+                    (
+                        new DummyFileSystemEvent(fileInfo),
+                        Global.CancellationToken.Token,
+                        isInitialScan
+                    );
 
-                if (isInitialScan)
-                    InitialSyncCountdownEvent.Signal();
-            }
+                    if (isInitialScan)
+                        InitialSyncCountdownEvent.Signal();
+                });
+            });
         }
 
-        private static IEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, int recursionLevel = 0)
+        private static IAsyncEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, int recursionLevel = 0)
         {
+            return new AsyncEnumerable<FileInfo>(async yield => {
+
 #if false //this built-in functio will throw IOException in case some subfolder is an invalid reparse point
-            return new DirectoryInfo(sourceDir)
-                .GetFiles(searchPattern, SearchOption.AllDirectories);
+                return new DirectoryInfo(sourceDir)
+                    .GetFiles(searchPattern, SearchOption.AllDirectories);
 #else
-            FileInfo[] fileInfos;
-            try
-            {
-                fileInfos = srcDirInfo.GetFiles(searchPattern, SearchOption.TopDirectoryOnly);
-            }
-            catch (Exception ex) when (ex is DirectoryNotFoundException || ex is UnauthorizedAccessException)
-            {
-                //ignore exceptions due to long pathnames       //TODO: find a way to handle them
-                fileInfos = Array.Empty<FileInfo>();
-            }
 
-            foreach (var fileInfo in fileInfos)
-            {
-                yield return fileInfo;
-            }
+                //Directory.GetFileSystemEntries would not help here since it returns only strings, not FileInfos
+
+                //TODO: under Windows10 use https://github.com/ljw1004/uwp-desktop for true async dirlists
+
+                FileInfo[] fileInfos;
+                try
+                {
+                    fileInfos = await Extensions.FSOperation
+                    (
+                        () => srcDirInfo.GetFiles(searchPattern, SearchOption.TopDirectoryOnly),
+                        Global.CancellationToken.Token
+                    );
+                }
+                catch (Exception ex) when (ex is DirectoryNotFoundException || ex is UnauthorizedAccessException)
+                {
+                    fileInfos = Array.Empty<FileInfo>();
+                }
+
+                foreach (var fileInfo in fileInfos)
+                {
+                    await yield.ReturnAsync(fileInfo);
+                }
 
 
-            DirectoryInfo[] dirInfos;
+                DirectoryInfo[] dirInfos;
 #pragma warning disable S2327   //Warning	S2327	Combine this 'try' with the one starting on line XXX.
-            try
-            {
-                dirInfos = srcDirInfo.GetDirectories("*", SearchOption.TopDirectoryOnly);
-            }
-            catch (Exception ex) when (ex is DirectoryNotFoundException || ex is UnauthorizedAccessException)
-            {
-                //ignore exceptions due to long pathnames       //TODO: find a way to handle them
-                dirInfos = Array.Empty<DirectoryInfo>();
-            }
+                try
+                {
+                    dirInfos = await Extensions.FSOperation
+                    (
+                        () => srcDirInfo.GetDirectories("*", SearchOption.TopDirectoryOnly),
+                        Global.CancellationToken.Token
+                    );
+                }
+                catch (Exception ex) when (ex is DirectoryNotFoundException || ex is UnauthorizedAccessException)
+                {
+                    dirInfos = Array.Empty<DirectoryInfo>();
+                }
 #pragma warning restore S2327
 
-            foreach (var dirInfo in dirInfos)
-            {
-                //TODO: option to follow reparse points
-                if ((dirInfo.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
-                    continue;
-
-
-                var nonFullNameInvariant = ConsoleWatch.GetNonFullName(dirInfo.FullName) + Path.PathSeparator;
-                if (
-                    Global.IgnorePathsStartingWith.Any(x => nonFullNameInvariant.StartsWith(x))
-                    || Global.IgnorePathsContaining.Any(x => nonFullNameInvariant.Contains(x))
-                )
+                foreach (var dirInfo in dirInfos)
                 {
-                    continue;
-                }
+                    //TODO: option to follow reparse points
+                    if ((dirInfo.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+                        continue;
 
 
-                var subDirFileInfos = ProcessSubDirs(dirInfo, searchPattern, recursionLevel + 1);
-                foreach (var subDirFileInfo in subDirFileInfos)
-                {
-                    yield return subDirFileInfo;
-                }
-            }   //foreach (var dirInfo in dirInfos)
+                    var nonFullNameInvariant = ConsoleWatch.GetNonFullName(dirInfo.FullName) + Path.PathSeparator;
+                    if (
+                        Global.IgnorePathsStartingWith.Any(x => nonFullNameInvariant.StartsWith(x))
+                        || Global.IgnorePathsContaining.Any(x => nonFullNameInvariant.Contains(x))
+                    )
+                    {
+                        continue;
+                    }
+
+
+                    var subDirFileInfos = ProcessSubDirs(dirInfo, searchPattern, recursionLevel + 1);
+                    await subDirFileInfos.ForEachAsync(async subDirFileInfo => 
+                    {
+                        await yield.ReturnAsync(subDirFileInfo);
+                    });
+                }   //foreach (var dirInfo in dirInfos)
 #endif
+            });   //return new AsyncEnumerable<int>(async yield => {
         }   //private static IEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, bool forHistory, int recursionLevel = 0)
+
         private static async Task WriteException(Exception ex)
         {
             if (ex is AggregateException aggex)
@@ -359,8 +420,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         private static async Task AddMessage(ConsoleColor color, string message, DateTime time, bool showAlert = false)
         {
-            await Task.Run(() =>
+            //await Task.Run(() => 
             {
+                //NB! using synchronous lock here since the MessageBox.Show and Console.WriteLine are synchronous
                 lock (ConsoleWatch.Lock)
                 {
                     try
@@ -386,7 +448,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         Console.ForegroundColor = ConsoleWatch._consoleColor;
                     }
                 }
-            });
+            }//)
+            //.WaitAsync(Global.CancellationToken.Token);
         }
 
         private static Task WaitForCtrlC()
@@ -403,6 +466,19 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         }
     }
 
+    internal class FileInfoRef
+    {
+        public FileInfo Value;
+        public CancellationToken Token;
+
+        [DebuggerStepThrough]
+        public FileInfoRef(FileInfo value, CancellationToken token)
+        {
+            Value = value;
+            Token = token;
+        }
+    }
+
     internal class Context
     {
         public readonly IFileSystemEvent Event;
@@ -410,14 +486,21 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public readonly bool IsSyncPath;
         public readonly bool IsInitialScan;
 
+        public FileSystemInfo FileInfo;
+        public bool FileInfoRefreshed;
+
+        public FileInfo OtherFileInfo;
+
         public DateTime Time
         {
+            [DebuggerStepThrough]
             get
             {
                 return Event?.DateTimeUtc ?? DateTime.UtcNow;
             }
         }
 
+        [DebuggerStepThrough]
 #pragma warning disable CA1068  //should take CancellationToken as the last parameter
         public Context(IFileSystemEvent eventObj, CancellationToken token, bool isSyncPath, bool isInitialScan)
 #pragma warning restore CA1068
@@ -426,6 +509,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             Token = token;
             IsSyncPath = isSyncPath;
             IsInitialScan = isInitialScan;
+
+            FileInfo = eventObj.FileSystemInfo;
+
+            //FileInfo type is a file from directory scan and has stale file length. 
+            //NB! if FileInfo is null then it is okay to set FileInfoRefreshed = true since if will be populated later with up-to-date information
+            FileInfoRefreshed = !(FileInfo is FileInfo);
         }
     }
 
@@ -440,16 +529,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         /// We need a static lock so it is shared by all.
         /// </summary>
         internal static readonly object Lock = new object();
-        //private static readonly AsyncLock AsyncLock = new AsyncLock();  //TODO: use this
 
         internal static DateTime PrevAlertTime;
         internal static string PrevAlertMessage;
 
-//#pragma warning disable S2223   //Warning	S2223	Change the visibility of 'DoingInitialSync' or make it 'const' or 'readonly'.
-//        public static bool DoingInitialSync = false;
-//#pragma warning restore S2223
-
-        private static ConcurrentDictionary<string, DateTime> BidirectionalConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
+        private static readonly ConcurrentDictionary<string, DateTime> BidirectionalConverterSavedFileDates = new ConcurrentDictionary<string, DateTime>();
         private static readonly AsyncLockQueueDictionary<string> FileEventLocks = new AsyncLockQueueDictionary<string>();
 
 
@@ -533,10 +617,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        public static string GetOtherFullName(string fullName)
+        public static string GetOtherFullName(Context context)
         {
-            var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-            var nonFullName = GetNonFullName(fullName);
+            var fullNameInvariant = context.Event.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
+            var nonFullName = GetNonFullName(context.Event.FullName);
 
             if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
             {
@@ -552,11 +636,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        public static async Task DeleteFile(string fullName, Context context)
+        public static async Task DeleteFile(FileInfoRef otherFileInfo, string otherFullName, Context context)
         {
             try
             {
-                fullName = Extensions.GetLongPath(fullName);
+                otherFullName = Extensions.GetLongPath(otherFullName);
 
                 while (true)
                 {
@@ -564,16 +648,18 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                     try
                     {
-                        if (File.Exists(fullName + "~"))
+                        var backupFileInfo = new FileInfoRef(null, context.Token);
+                        if (await GetFileExists(backupFileInfo, otherFullName + "~"))
                         {
 #pragma warning disable SEC0116 //Warning	SEC0116	Unvalidated file paths are passed to a file delete API, which can allow unauthorized file system operations (e.g. read, write, delete) to be performed on unintended server files.
-                            File.Delete(fullName + "~");
+                            await Extensions.FSOperation(() => File.Delete(otherFullName + "~"), context.Token);
 #pragma warning restore SEC0116
                         }
 
-                        if (File.Exists(fullName))
+                        //fileInfo?.Refresh();
+                        if (await GetFileExists(otherFileInfo, otherFullName))
                         {
-                            File.Move(fullName, fullName + "~");
+                            await Extensions.FSOperation(() => File.Move(otherFullName, otherFullName + "~"), context.Token);
                         }
 
                         return;
@@ -606,11 +692,51 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             return converterSaveDate;
         }
 
-        public static bool NeedsUpdate(Context context)
+        public static async Task RefreshFileInfo(Context context)
+        {
+            var fileInfo = context.Event.FileSystemInfo as FileInfo;
+            if (fileInfo != null && !context.FileInfoRefreshed)
+            {
+                context.FileInfoRefreshed = true;
+
+                await Extensions.FSOperation
+                (
+                    () => 
+                    {
+                        fileInfo.Refresh();    //https://stackoverflow.com/questions/7828132/getting-current-file-length-fileinfo-length-caching-and-stale-information
+                        if (fileInfo.Exists)
+                        {
+                            var dummyAttributes = fileInfo.Attributes;
+                            var dymmyLength = fileInfo.Length;
+                            var dymmyTime = fileInfo.LastWriteTimeUtc;
+                        }
+                    },
+                    context.Token
+                );
+            }
+        }
+
+        public static async Task<bool> NeedsUpdate(Context context)
         {
             if (context.IsInitialScan)
             {
                 return true;
+            }
+
+
+            var fileInfoForLength = context.FileInfo as FileInfo;
+            if (fileInfoForLength != null)   //a file from directory scan
+            {
+                //await RefreshFileInfo(context);
+
+                var fileLength = fileInfoForLength.Length;      //NB! this info might be stale, but lets ignore that issue here
+                long maxFileSize = Math.Min(FileExtensions.MaxByteArraySize, Global.MaxFileSizeMB * (1024 * 1024));
+                if (maxFileSize > 0 && fileLength > maxFileSize)
+                {
+                    await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : fileLength > maxFileSize : {fileLength} > {maxFileSize}", context);
+
+                    return false;
+                }
             }
 
             var converterSaveDate = GetBidirectionalConverterSaveDate(context.Event.FullName);
@@ -621,8 +747,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 || fileTime > converterSaveDate.AddSeconds(3)     //NB! ignore if the file changed during 3 seconds after converter save   //TODO!! config
             )
             {
-                var otherFullName = GetOtherFullName(context.Event.FullName);
-                var otherFileTime = GetFileTime(otherFullName);
+                var otherFullName = GetOtherFullName(context);
+
+                var otherFileInfoRef = new FileInfoRef(context.OtherFileInfo, context.Token);
+                var otherFileTime = await GetFileTime(otherFileInfoRef, otherFullName);
+                context.OtherFileInfo = otherFileInfoRef.Value;
+
                 if (fileTime > otherFileTime)     //NB!
                 {
                     return true;
@@ -632,19 +762,19 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             return false;
         }
 
-        public static async Task FileUpdated(string fullName, Context context)
+        public static async Task FileUpdated(Context context)
         {
             if (
-                IsWatchedFile(fullName)
-                && NeedsUpdate(context)     //NB!
+                IsWatchedFile(context.Event.FullName)
+                && (await NeedsUpdate(context))     //NB!
             )
             {
-                var otherFullName = GetOtherFullName(fullName);
-                using (await Global.FileOperationLocks.LockAsync(fullName, otherFullName, context.Token))
+                var otherFullName = GetOtherFullName(context);
+                using (await Global.FileOperationLocks.LockAsync(context.Event.FullName, otherFullName, context.Token))
                 {
                     using (await Global.FileOperationSemaphore.LockAsync())
                     {
-                        var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
+                        var fullNameInvariant = context.Event.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
 
                         if (
                             Global.WatchedCodeExtension.Any(x => fullNameInvariant.EndsWith("." + x))
@@ -653,11 +783,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         {
                             if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
                             {
-                                await AsyncToSyncConverter.AsyncFileUpdated(fullName, context);
+                                await AsyncToSyncConverter.AsyncFileUpdated(context);
                             }
                             else if (IsSyncPath(fullNameInvariant))     //NB!
                             {
-                                await SyncToAsyncConverter.SyncFileUpdated(fullName, context);
+                                await SyncToAsyncConverter.SyncFileUpdated(context);
                             }
                             else
                             {
@@ -665,67 +795,132 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             }
                         }
                         else    //Assume ResX file
-                        {                        
-                            var fileData = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(fullName), context.Token);
-                            var originalData = fileData;
+                        {
+                            long maxFileSize = Math.Min(FileExtensions.MaxByteArraySize, Global.MaxFileSizeMB * (1024 * 1024));
+                            //TODO: consider destination disk free space here together with the file size already before reading the file
+
+                            var fileDataTuple = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
+                            if (fileDataTuple.Item1 == null)   //maximum length exceeded
+                            {
+                                await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : fileLength > maxFileSize : {fileDataTuple.Item2} > {maxFileSize}", context);
+
+                                return; //TODO: log error?
+                            }
 
                             //save without transformations
-                            await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
+                            await ConsoleWatch.SaveFileModifications(fileDataTuple.Item1, context);
                         }
                     }   //using (await Global.FileOperationSemaphore.LockAsync())
                 }   //using (await Global.FileOperationLocks.LockAsync(fullName, otherFullName, context.Token))
             }
         }   //public static async Task FileUpdated(string fullName, Context context)
 
-        private static async Task FileDeleted(string fullName, Context context)
+        private static async Task FileDeleted(Context context)
         {
-            if (IsWatchedFile(fullName))
+            if (IsWatchedFile(context.Event.FullName))
             {
-                if (!File.Exists(Extensions.GetLongPath(fullName)))  //NB! verify that the file is still deleted
-                {
-                    var otherFullName = GetOtherFullName(fullName);
+                await RefreshFileInfo(context);  //NB! verify that the file is still deleted
 
-                    await DeleteFile(otherFullName, context);
+                if (!await GetFileExists(context))  //NB! verify that the file is still deleted
+                {
+                    var otherFullName = GetOtherFullName(context);
+
+                    var otherFileInfo = new FileInfoRef(null, context.Token);
+                    await DeleteFile(otherFileInfo, otherFullName, context);
                 }
                 else    //NB! file appears to be recreated
                 {
-                    await FileUpdated(fullName, context);
+                    //await FileUpdated(fullName, context);
                 }
             }
         }
 
-        private static DateTime GetFileTime(string fullName)
+        private static async Task<FileInfo> GetFileInfo(string fullName, CancellationToken token)
         {
-            try
-            {
-                fullName = Extensions.GetLongPath(fullName);
+            fullName = Extensions.GetLongPath(fullName);
 
-                if (File.Exists(fullName))
-                    return File.GetLastWriteTimeUtc(fullName);
-                else
-                    return DateTime.MinValue;
-            }
-            catch (FileNotFoundException)    //the file might have been deleted in the meanwhile
-            {
-                return DateTime.MinValue;
-            }
+            var result = await Extensions.FSOperation
+            (
+                () => 
+                {
+                    var fileInfo = new FileInfo(fullName);
+
+                    //this will cause the actual filesystem call
+                    if (fileInfo.Exists)
+                    {
+                        var dummyAttributes = fileInfo.Attributes;
+                        var dymmyLength = fileInfo.Length;
+                        var dymmyTime = fileInfo.LastWriteTimeUtc;
+                    }
+
+                    return fileInfo;
+                },
+                token
+            ); 
+
+            return result;
         }
 
-        private static long GetFileSize(string fullName)
+        private static async Task<bool> GetIsFile(Context context)
         {
-            try
+            if (context.FileInfo == null)
             {
-                fullName = Extensions.GetLongPath(fullName);
+                context.FileInfo = await GetFileInfo(context.Event.FullName, context.Token);
+            }
 
-                if (File.Exists(fullName))
-                    return new FileInfo(fullName).Length;
-                else
-                    return -1;
-            }
-            catch (FileNotFoundException)    //the file might have been deleted in the meanwhile
+            return (context.FileInfo.Attributes & FileAttributes.Directory) == 0;
+        }
+
+        private static async Task<bool> GetFileExists(Context context)
+        {
+            if (context.FileInfo == null)
             {
-                return -1;
+                context.FileInfo = await GetFileInfo(context.Event.FullName, context.Token);
             }
+
+            return context.FileInfo.Exists && (context.FileInfo.Attributes & FileAttributes.Directory) == 0;
+        }
+
+        private static async Task<bool> GetFileExists(FileInfoRef fileInfo, string fullName)
+        {
+            if (fileInfo.Value == null)
+            {
+                fileInfo.Value = await GetFileInfo(fullName, fileInfo.Token);
+            }
+
+            return fileInfo.Value.Exists && (fileInfo.Value.Attributes & FileAttributes.Directory) == 0;
+        }
+
+        private static async Task<DateTime> GetFileTime(FileInfoRef otherFileInfo, string otherFullName)
+        {
+            if (otherFileInfo.Value == null)
+            {
+                otherFileInfo.Value = await GetFileInfo(otherFullName, otherFileInfo.Token);
+
+                if (!await GetFileExists(otherFileInfo, otherFullName))
+                {
+                    return DateTime.MinValue;
+                }
+            }
+
+            return otherFileInfo.Value.LastWriteTimeUtc;
+        }
+
+        private static async Task<long> GetFileSize(FileInfoRef otherFileInfo, string otherFullName)
+        {
+            if (otherFileInfo.Value == null)
+            {
+                otherFileInfo.Value = await GetFileInfo(otherFullName, otherFileInfo.Token);
+
+                if (!await GetFileExists(otherFileInfo, otherFullName))
+                {
+                    return -1;
+                }
+            }
+
+            //NB! no RefreshFileInfo or GetFileExists calls here
+
+            return otherFileInfo.Value.Length;
         }
 
         private static bool IsWatchedFile(string fullName)
@@ -774,8 +969,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             //NB! create separate context to properly handle disk free space checks on cases where file is renamed from src path to dest path (not a recommended practice though!)
 
-            var previousFullNameInvariant = fse.PreviousFileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
-            var previousContext = new Context(fse, token, isSyncPath: IsSyncPath(previousFullNameInvariant), isInitialScan: false);
+            var prevFileFSE = new DummyFileSystemEvent(fse.PreviousFileSystemInfo);
+            var previousFullNameInvariant = prevFileFSE.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
+            var previousContext = new Context(prevFileFSE, token, isSyncPath: IsSyncPath(previousFullNameInvariant), isInitialScan: false);
 
             var newFullNameInvariant = fse.FileSystemInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var newContext = new Context(fse, token, isSyncPath: IsSyncPath(newFullNameInvariant), isInitialScan: false);
@@ -799,7 +995,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             {
                                 if (newFileIsWatchedFile)
                                 {
-                                    await FileUpdated(fse.FileSystemInfo.FullName, newContext);
+                                    await FileUpdated(newContext);
                                 }
 
                                 if (prevFileIsWatchedFile)
@@ -820,7 +1016,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                                     }
                                     else
                                     {
-                                        await FileDeleted(fse.PreviousFileSystemInfo.FullName, previousContext);
+                                        await FileDeleted(previousContext);
                                     }
                                 }
                             }
@@ -855,7 +1051,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                         using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
                         {
-                            await FileDeleted(fse.FileSystemInfo.FullName, context);
+                            await FileDeleted(context);
                         }
                     }
                 }
@@ -886,7 +1082,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                         using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
                         {
-                            await FileUpdated(fse.FileSystemInfo.FullName, context);
+                            await FileUpdated(context);
                         }
                     }
                 }
@@ -913,13 +1109,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     if (IsWatchedFile(fse.FileSystemInfo.FullName))
                     {
                         //check for file type only after checking IsWatchedFile first since file type checking might already be a slow operation
-                        if (File.Exists(Extensions.GetLongPath(fse.FileSystemInfo.FullName)))     //for some reason fse.IsFile is set even for folders
+                        if (await GetIsFile(context))     //for some reason fse.IsFile is set even for folders
                         {
                             await AddMessage(ConsoleColor.Gray, $"[{(fse.IsFile ? "F" : "D")}][T]:{fse.FileSystemInfo.FullName}", context);
 
                             using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
                             {
-                                await FileUpdated(fse.FileSystemInfo.FullName, context);
+                                await FileUpdated(context);
                             }
                         }
                     }
@@ -937,10 +1133,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static async Task AddMessage(ConsoleColor color, string message, Context context, bool showAlert = false)
         {
-            await Task.Run(() =>
+            //await Task.Run(() =>
             {
+                //NB! using synchronous lock here since the MessageBox.Show and Console.WriteLine are synchronous
                 lock (Lock)
-                //using (await AsyncLock.LockAsync())
                 {
                     try
                     {
@@ -968,20 +1164,27 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         Console.ForegroundColor = _consoleColor;
                     }
                 }
-            }, context.Token);
+            }//)
+            //.WaitAsync(context.Token);
         }
 
-        public static async Task SaveFileModifications(string fullName, string fileData, string originalData, Context context)
+        public static async Task SaveFileModifications(string fileData, string originalData, Context context)
         {
-            var otherFullName = GetOtherFullName(fullName);
-            var otherFileLength = GetFileSize(otherFullName);
+            //if (fileData == originalData)
+            //    return;
+
+
+            var otherFullName = GetOtherFullName(context);
+            var otherFileInfoRef = new FileInfoRef(context.OtherFileInfo, context.Token);
+            var otherFileLength = await GetFileSize(otherFileInfoRef, otherFullName);
+            context.OtherFileInfo = otherFileInfoRef.Value;
 
 
             //NB! detect whether the file actually changed
-            var otherFileData = 
-                File.Exists(Extensions.GetLongPath(otherFullName))
+            var otherFileData =
+                (await GetFileExists(otherFileInfoRef, otherFullName))
                     && otherFileLength == fileData.Length   //optimisation
-                ? await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(otherFullName), context.Token)     //TODO: optimisation: no need to read the bytes in case the file lenghts are different
+                ? await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(otherFullName), context.Token)     //TODO: optimisation: no need to read the bytes in case the file lengths are different
                 : null;
 
             if (
@@ -990,20 +1193,20 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             )
             {
                 var minDiskFreeSpace = context.IsSyncPath ? Global.AsyncPathMinFreeSpace : Global.SyncPathMinFreeSpace;
-                var actualFreeSpace = minDiskFreeSpace > 0 ? CheckDiskSpace(otherFullName) : 0;
+                var actualFreeSpace = minDiskFreeSpace > 0 ? Extensions.CheckDiskSpace(otherFullName) : 0;
                 if (minDiskFreeSpace > actualFreeSpace - fileData.Length)
                 {
-                    await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {fullName} : minDiskFreeSpace > actualFreeSpace : {minDiskFreeSpace} > {actualFreeSpace}", context);
+                    await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : minDiskFreeSpace > actualFreeSpace : {minDiskFreeSpace} > {actualFreeSpace}", context);
 
                     return;
                 }
 
 
-                await DeleteFile(otherFullName, context);
+                await DeleteFile(otherFileInfoRef, otherFullName, context);
 
                 var otherDirName = Path.GetDirectoryName(otherFullName);
-                if (!Directory.Exists(Extensions.GetLongPath(otherDirName)))
-                    Directory.CreateDirectory(Extensions.GetLongPath(otherDirName));
+                if (!await Extensions.FSOperation(() => Directory.Exists(Extensions.GetLongPath(otherDirName)), context.Token))
+                    await Extensions.FSOperation(() => Directory.CreateDirectory(Extensions.GetLongPath(otherDirName)), context.Token);
 
                 await FileExtensions.WriteAllTextAsync(Extensions.GetLongPath(otherFullName), fileData, context.Token);
 
@@ -1011,7 +1214,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 BidirectionalConverterSavedFileDates[otherFullName] = now;
 
 
-                await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);
+                await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {context.Event.FullName}", context);
             }
             else if (false)
             {
@@ -1020,7 +1223,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                 try
                 {
-                    File.SetLastWriteTimeUtc(Extensions.GetLongPath(otherFullName), now);
+                    await Extensions.FSOperation(() => File.SetLastWriteTimeUtc(Extensions.GetLongPath(otherFullName), now), context.Token);
                 }
                 catch (Exception ex)
                 {
@@ -1031,39 +1234,41 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }   //public static async Task SaveFileModifications(string fullName, string fileData, string originalData, Context context)
 
-        public static async Task SaveFileModifications(string fullName, byte[] fileData, byte[] originalData, Context context)
+        public static async Task SaveFileModifications(byte[] fileData, Context context)
         {
-            var otherFullName = GetOtherFullName(fullName);
-            var otherFileLength = GetFileSize(otherFullName);
+            var otherFullName = GetOtherFullName(context);
+            var otherFileInfoRef = new FileInfoRef(context.OtherFileInfo, context.Token);
+            var otherFileLength = await GetFileSize(otherFileInfoRef, otherFullName);
+            context.OtherFileInfo = otherFileInfoRef.Value;
 
 
             //NB! detect whether the file actually changed
-            var otherFileData = 
-                File.Exists(Extensions.GetLongPath(otherFullName))
+            var otherFileDataTuple =
+                (await GetFileExists(otherFileInfoRef, otherFullName))
                     && otherFileLength == fileData.Length   //optimisation
-                ? await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(otherFullName), context.Token)    //TODO: optimisation: no need to read the bytes in case the file lenghts are different
+                ? await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(otherFullName), context.Token)    //TODO: optimisation: no need to read the bytes in case the file lengths are different
                 : null;
 
             if (
-                (otherFileData?.Length ?? -1) != fileData.Length
-                || !FileExtensions.BinaryEqual(otherFileData, fileData)
+                (otherFileDataTuple?.Item1?.Length ?? -1) != fileData.Length
+                || !FileExtensions.BinaryEqual(otherFileDataTuple.Item1, fileData)
             )
             {
                 var minDiskFreeSpace = context.IsSyncPath ? Global.AsyncPathMinFreeSpace : Global.SyncPathMinFreeSpace;
-                var actualFreeSpace = minDiskFreeSpace > 0 ? CheckDiskSpace(otherFullName) : 0;
+                var actualFreeSpace = minDiskFreeSpace > 0 ? Extensions.CheckDiskSpace(otherFullName) : 0;
                 if (minDiskFreeSpace > actualFreeSpace - fileData.Length)
                 {
-                    await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {fullName} : minDiskFreeSpace > actualFreeSpace : {minDiskFreeSpace} > {actualFreeSpace}", context);
+                    await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : minDiskFreeSpace > actualFreeSpace : {minDiskFreeSpace} > {actualFreeSpace}", context);
 
                     return;
                 }
 
 
-                await DeleteFile(otherFullName, context);
+                await DeleteFile(otherFileInfoRef, otherFullName, context);
 
                 var otherDirName = Path.GetDirectoryName(otherFullName);
-                if (!Directory.Exists(Extensions.GetLongPath(otherDirName)))
-                    Directory.CreateDirectory(Extensions.GetLongPath(otherDirName));
+                if (!await Extensions.FSOperation(() => Directory.Exists(Extensions.GetLongPath(otherDirName)), context.Token))
+                    await Extensions.FSOperation(() => Directory.CreateDirectory(Extensions.GetLongPath(otherDirName)), context.Token);
 
                 await FileExtensions.WriteAllBytesAsync(Extensions.GetLongPath(otherFullName), fileData, context.Token);
 
@@ -1071,7 +1276,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 BidirectionalConverterSavedFileDates[otherFullName] = now;
 
 
-                await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {fullName}", context);
+                await AddMessage(ConsoleColor.Magenta, $"Synchronised updates from file {context.Event.FullName}", context);
             }
             else if (false)     //TODO: config
             {
@@ -1080,7 +1285,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                 try
                 {
-                    File.SetLastWriteTimeUtc(Extensions.GetLongPath(otherFullName), now);
+                    await Extensions.FSOperation(() => File.SetLastWriteTimeUtc(Extensions.GetLongPath(otherFullName), now), context.Token);
                 }
                 catch (Exception ex)
                 {
@@ -1090,29 +1295,6 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 BidirectionalConverterSavedFileDates[otherFullName] = now;
             }
         }   //public static async Task SaveFileModifications(string fullName, byte[] fileData, byte[] originalData, Context context)
-
-        public static long? CheckDiskSpace(string path)
-        {
-            long? freeBytes = null;
-
-            try     //NB! on some drives (for example, RAM drives, GetDiskFreeSpaceEx does not work
-            {
-                //NB! DriveInfo works on paths well in Linux    //TODO: what about Mac?
-                var drive = new DriveInfo(path);
-                freeBytes = drive.AvailableFreeSpace;
-            }
-            catch (ArgumentException)
-            {
-                if (ConfigParser.IsWindows)
-                {
-                    long freeBytesOut;
-                    if (WindowsDllImport.GetDiskFreeSpaceEx(path, out freeBytesOut, out var _, out var __))
-                        freeBytes = freeBytesOut;
-                }
-            }
-
-            return freeBytes;
-        }
 
 #pragma warning restore AsyncFixer01
     }
@@ -1126,5 +1308,47 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             out long lpFreeBytesAvailable,
             out long lpTotalNumberOfBytes,
             out long lpTotalNumberOfFreeBytes);
-    }
+
+
+        public enum PROCESSINFOCLASS : int
+        {
+            ProcessIoPriority = 33
+        };
+
+        public enum PROCESSIOPRIORITY : int
+        {
+            PROCESSIOPRIORITY_UNKNOWN = -1,
+
+            PROCESSIOPRIORITY_VERY_LOW = 0,
+            PROCESSIOPRIORITY_LOW,
+            PROCESSIOPRIORITY_NORMAL,
+            PROCESSIOPRIORITY_HIGH
+        };
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern int NtSetInformationProcess(IntPtr processHandle,
+            PROCESSINFOCLASS processInformationClass, 
+            [In] ref int processInformation,
+            uint processInformationLength);
+
+        public static bool NT_SUCCESS(int Status)
+        {
+            return (Status >= 0);
+        }
+
+        public static bool SetIOPriority(IntPtr processHandle, PROCESSIOPRIORITY ioPriorityIn)
+        {
+            //PROCESSINFOCLASS.ProcessIoPriority is actually only available only on XPSP3, Server2003, Vista or newer: http://blogs.norman.com/2011/security-research/ntqueryinformationprocess-ntsetinformationprocess-cheat-sheet
+            try
+            {
+                int ioPriority = (int)ioPriorityIn;
+                int result = NtSetInformationProcess(processHandle, PROCESSINFOCLASS.ProcessIoPriority, ref ioPriority, sizeof(int));
+                return NT_SUCCESS(result);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+    }   //internal static class WindowsDllImport
 }

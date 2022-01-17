@@ -9,6 +9,7 @@
 #define ASYNC
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -120,15 +121,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
 
-        public static async Task AsyncFileUpdated(string fullName, Context context)
+        public static async Task AsyncFileUpdated(Context context)
         {
             //using (await Global.FileOperationAsyncLock.LockAsync())
             {
-                var fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(fullName), context.Token);
+                var fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
                 var originalData = fileData;
 
 
-                if (fullName.EndsWith(".cs"))
+                if (context.Event.FullName.EndsWith(".cs"))
                 {
                     foreach (var replacement in CS_Replacements)
                     {
@@ -140,7 +141,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     fileData = CS_TaskReplaceRegex.Replace(fileData, CS_TaskReplaceRegexReplacement);
                     fileData = CS_TaskDelayReplaceRegex.Replace(fileData, CS_TaskDelayReplaceRegexReplacement);
                 }
-                else if (fullName.EndsWith(".py"))
+                else if (context.Event.FullName.EndsWith(".py"))
                 {
                     foreach (var replacement in PY_Replacements)
                     {
@@ -156,7 +157,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
 
 
-                await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
+                await ConsoleWatch.SaveFileModifications(fileData, originalData, context);
 
             }   //using (await Global.FileOperationAsyncLock.LockAsync())
         }   //public static async Task AsyncFileUpdated(string fullName, Context context)

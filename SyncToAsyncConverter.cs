@@ -9,6 +9,7 @@
 #define ASYNC
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -95,15 +96,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }   //static SyncToAsyncConverter()
 
-        public static async Task SyncFileUpdated(string fullName, Context context)
+        public static async Task SyncFileUpdated(Context context)
         {
             //using (await Global.FileOperationAsyncLock.LockAsync())
             {
-                var fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(fullName), context.Token);
+                var fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
                 var originalData = fileData;
                 
 
-                if (fullName.EndsWith(".cs"))
+                if (context.Event.FullName.EndsWith(".cs"))
                 {
                     fileData = CS_TaskDelayReplaceRegex.Replace(fileData, CS_TaskDelayReplaceRegexReplacement);
                     fileData = CS_TaskReplaceRegex.Replace(fileData, CS_TaskReplaceRegexReplacement);
@@ -115,7 +116,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         fileData = replacement.Item1.Replace(fileData, replacement.Item2);
                     }
                 }
-                else if (fullName.EndsWith(".py"))
+                else if (context.Event.FullName.EndsWith(".py"))
                 {
                     fileData = PY_AsyncReplaceRegex.Replace(fileData, PY_AsyncRegexReplacement);
                     fileData = PY_AwaitReplaceRegex.Replace(fileData, PY_AwaitReplaceRegexReplacement);
@@ -131,7 +132,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
 
 
-                await ConsoleWatch.SaveFileModifications(fullName, fileData, originalData, context);
+                await ConsoleWatch.SaveFileModifications(fileData, originalData, context);
 
             }   //using (await Global.FileOperationAsyncLock.LockAsync())
         }   //public static async Task SyncFileUpdated(string fullName, Context context)

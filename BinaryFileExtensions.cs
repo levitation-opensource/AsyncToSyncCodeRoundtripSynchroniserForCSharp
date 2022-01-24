@@ -61,7 +61,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         return new Tuple<byte[], long>(result, len);
                     }
                 }
-                catch (IOException)
+                catch (Exception ex) when (
+                    ex is IOException
+                    || ex is UnauthorizedAccessException    //can happen when a folder was just created     //TODO: abandon retries after a certain number of attempts in this case
+                )
                 {
                     //retry after delay
                     try

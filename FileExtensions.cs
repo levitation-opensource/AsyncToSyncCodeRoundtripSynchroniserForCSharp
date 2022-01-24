@@ -61,7 +61,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         ? await Task.FromCanceled<string>(cancellationToken)
                         : await InternalReadAllTextAsync(path, encoding, cancellationToken);
                 }
-                catch (IOException)    //roland
+                catch (Exception ex) when (     //roland
+                    ex is IOException
+                    || ex is UnauthorizedAccessException    //can happen when a folder was just created     //TODO: abandon retries after a certain number of attempts in this case
+                )
                 {
                     //retry after delay
                     try

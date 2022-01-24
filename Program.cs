@@ -37,6 +37,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
         public static bool UseIdlePriority = false;
+        public static bool ShowErrorAlerts = true;
 
         public static long MaxFileSizeMB = 2048;
 
@@ -132,6 +133,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             Global.UseIdlePriority = fileConfig.GetTextUpper("UseIdlePriority") == "TRUE";   //default is false
+            Global.ShowErrorAlerts = fileConfig.GetTextUpper("ShowErrorAlerts") != "FALSE";   //default is true
 
 
             Global.MaxFileSizeMB = fileConfig.GetLong("MaxFileSizeMB") ?? Global.MaxFileSizeMB;
@@ -339,6 +341,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
                 catch (Exception ex) when (ex is DirectoryNotFoundException || ex is UnauthorizedAccessException)
                 {
+                    //UnauthorizedAccessException can also occur when a folder was just created, but it can still be ignored here since then file add handler will take care of that folder
+
                     fileInfos = Array.Empty<FileInfo>();
                 }
 
@@ -360,6 +364,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
                 catch (Exception ex) when (ex is DirectoryNotFoundException || ex is UnauthorizedAccessException)
                 {
+                    //UnauthorizedAccessException can also occur when a folder was just created, but it can still be ignored here since then file add handler will take care of that folder
+
                     dirInfos = Array.Empty<DirectoryInfo>();
                 }
 #pragma warning restore S2327
@@ -473,6 +479,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                         if (
                             showAlert
+                            && Global.ShowErrorAlerts
                             && (ConsoleWatch.PrevAlertTime != time || ConsoleWatch.PrevAlertMessage != message)
                         )
                         {
@@ -1240,6 +1247,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                         if (
                             showAlert
+                            && Global.ShowErrorAlerts
                             && (PrevAlertTime != context.Time || PrevAlertMessage != message)
                         )
                         {
@@ -1412,8 +1420,6 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public enum PROCESSIOPRIORITY : int
         {
-            PROCESSIOPRIORITY_UNKNOWN = -1,
-
             PROCESSIOPRIORITY_VERY_LOW = 0,
             PROCESSIOPRIORITY_LOW,
             PROCESSIOPRIORITY_NORMAL,

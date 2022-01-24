@@ -1,5 +1,5 @@
 ﻿//
-// Copyright (c) Roland Pihlakas 2019 - 2020
+// Copyright (c) Roland Pihlakas 2019 - 2022
 // roland@simplify.ee
 //
 // Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
@@ -139,12 +139,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             Global.Bidirectional = fileConfig.GetTextUpper("Bidirectional") != "FALSE";   //default is true
 
-            if (!string.IsNullOrWhiteSpace(fileConfig.GetTextUpper("CaseSensitiveFilenames")))
-                Global.CaseSensitiveFilenames = fileConfig.GetTextUpper("CaseSensitiveFilenames") == "TRUE";   //default is false
+            if (!string.IsNullOrWhiteSpace(fileConfig.GetTextUpper("CaseSensitiveFilenames")))   //default is null
+                Global.CaseSensitiveFilenames = fileConfig.GetTextUpper("CaseSensitiveFilenames") == "TRUE";
 
 
-            Global.AsyncPath = fileConfig.GetTextUpperOnWindows(Global.CaseSensitiveFilenames, "AsyncPath");
-            Global.SyncPath = fileConfig.GetTextUpperOnWindows(Global.CaseSensitiveFilenames, "SyncPath");
+            Global.AsyncPath = Extensions.GetDirPathWithTrailingSlash(fileConfig.GetTextUpperOnWindows(Global.CaseSensitiveFilenames, "AsyncPath"));
+            Global.SyncPath = Extensions.GetDirPathWithTrailingSlash(fileConfig.GetTextUpperOnWindows(Global.CaseSensitiveFilenames, "SyncPath"));
 
             Global.AsyncPathMinFreeSpace = fileConfig.GetLong("AsyncPathMinFreeSpace") ?? 0;
             Global.SyncPathMinFreeSpace = fileConfig.GetLong("SyncPathMinFreeSpace") ?? 0;
@@ -391,8 +391,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             });   //return new AsyncEnumerable<int>(async yield => {
         }   //private static IEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, bool forHistory, int recursionLevel = 0)
 
-        private static async Task WriteException(Exception ex)
+        private static async Task WriteException(Exception ex_in)
         {
+            var ex = ex_in;
+
+
+            if (ex is TaskCanceledException && Global.CancellationToken.IsCancellationRequested)
+                return;
+
+
             if (ex is AggregateException aggex)
             {
                 await WriteException(aggex.InnerException);
@@ -403,13 +410,47 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 return;
             }
 
+
+
+            ex = ex_in;     //TODO: refactor to shared function
+
+            var message = new StringBuilder();
+            message.Append(DateTime.Now);
+            message.AppendLine(" Unhandled exception: ");
+
+            message.AppendLine(ex.GetType().ToString());
+            message.AppendLine(ex.Message);
+            message.AppendLine("Stack Trace:");
+            message.AppendLine(ex.StackTrace);
+
+            while (ex.InnerException != null)
+            {
+                message.AppendLine("");
+                message.Append("Inner exception: ");
+                message.Append(ex.GetType().ToString());
+                message.AppendLine(": ");
+                message.AppendLine(ex.InnerException.Message);
+                message.AppendLine("Inner exception stacktrace: ");
+                message.AppendLine(ex.InnerException.StackTrace);
+
+                ex = ex.InnerException;     //loop
+            }
+
+            message.AppendLine("");
+
+            await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), Global.CancellationToken.Token);
+
+
+
             //Console.WriteLine(ex.Message);
-            StringBuilder message = new StringBuilder(ex.Message);
+            message.Clear();     //TODO: refactor to shared function
+            message.Append(ex.Message.ToString());
             while (ex.InnerException != null)
             {
                 ex = ex.InnerException;
                 //Console.WriteLine(ex.Message);
-                message.Append(Environment.NewLine + ex.Message);
+                message.AppendLine("");
+                message.Append(ex.Message);
             }
 
 
@@ -564,10 +605,17 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         }
 #endif
 
-        public static async Task WriteException(Exception ex, Context context)
+        public static async Task WriteException(Exception ex_in, Context context)
         {
+            var ex = ex_in;
+
+            
             //if (ConsoleWatch.DoingInitialSync)  //TODO: config
             //    return;
+
+
+            if (ex is TaskCanceledException && Global.CancellationToken.IsCancellationRequested)
+                return;
 
 
             if (ex is AggregateException aggex)
@@ -580,13 +628,47 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 return;
             }
 
+
+
+            ex = ex_in;     //TODO: refactor to shared function
+
+            var message = new StringBuilder();
+            message.Append(DateTime.Now);
+            message.AppendLine(" Unhandled exception: ");
+
+            message.AppendLine(ex.GetType().ToString());
+            message.AppendLine(ex.Message);
+            message.AppendLine("Stack Trace:");
+            message.AppendLine(ex.StackTrace);
+
+            while (ex.InnerException != null)
+            {
+                message.AppendLine("");
+                message.Append("Inner exception: ");
+                message.Append(ex.GetType().ToString());
+                message.AppendLine(": ");
+                message.AppendLine(ex.InnerException.Message);
+                message.AppendLine("Inner exception stacktrace: ");
+                message.AppendLine(ex.InnerException.StackTrace);
+
+                ex = ex.InnerException;     //loop
+            }
+
+            message.AppendLine("");
+
+            await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), context.Token);
+
+
+
             //Console.WriteLine(ex.Message);
-            StringBuilder message = new StringBuilder(ex.Message);
+            message.Clear();     //TODO: refactor to shared function
+            message.Append(ex.Message.ToString());
             while (ex.InnerException != null)
             {
                 ex = ex.InnerException;
                 //Console.WriteLine(ex.Message);
-                message.Append(Environment.NewLine + ex.Message);
+                message.AppendLine("");
+                message.Append(ex.Message);
             }
 
 
@@ -594,16 +676,21 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             await AddMessage(ConsoleColor.Red, msg, context, showAlert: true);
         }
 
+        public static bool IsAsyncPath(string fullNameInvariant)
+        {
+            return Extensions.GetLongPath(fullNameInvariant).StartsWith(Extensions.GetLongPath(Global.AsyncPath));
+        }
+
         public static bool IsSyncPath(string fullNameInvariant)
         {
-            return fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.SyncPath));
+            return Extensions.GetLongPath(fullNameInvariant).StartsWith(Extensions.GetLongPath(Global.SyncPath));
         }
 
         public static string GetNonFullName(string fullName)
         {
             var fullNameInvariant = fullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
 
-            if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
+            if (IsAsyncPath(fullNameInvariant))
             {
                 return fullName.Substring(Extensions.GetLongPath(Global.AsyncPath).Length);
             }
@@ -622,7 +709,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             var fullNameInvariant = context.Event.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames);
             var nonFullName = GetNonFullName(context.Event.FullName);
 
-            if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
+            if (IsAsyncPath(fullNameInvariant))
             {
                 return Path.Combine(Global.SyncPath, nonFullName);
             }
@@ -781,7 +868,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             || Global.WatchedCodeExtension.Contains("*")
                         )
                         {
-                            if (fullNameInvariant.StartsWith(Extensions.GetLongPath(Global.AsyncPath)))
+                            if (IsAsyncPath(fullNameInvariant))
                             {
                                 await AsyncToSyncConverter.AsyncFileUpdated(context);
                             }
@@ -799,12 +886,20 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             long maxFileSize = Math.Min(FileExtensions.MaxByteArraySize, Global.MaxFileSizeMB * (1024 * 1024));
                             //TODO: consider destination disk free space here together with the file size already before reading the file
 
-                            var fileDataTuple = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
-                            if (fileDataTuple.Item1 == null)   //maximum length exceeded
-                            {
-                                await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : fileLength > maxFileSize : {fileDataTuple.Item2} > {maxFileSize}", context);
+                            Tuple<byte[], long> fileDataTuple = null;
+                            try
+                            { 
+                                fileDataTuple = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
+                                if (fileDataTuple.Item1 == null)   //maximum length exceeded
+                                {
+                                    await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : fileLength > maxFileSize : {fileDataTuple.Item2} > {maxFileSize}", context);
 
-                                return; //TODO: log error?
+                                    return; //TODO: log error?
+                                }                            
+                            }
+                            catch (FileNotFoundException)   //file was removed by the time queue processing got to it
+                            {
+                                return;     
                             }
 
                             //save without transformations
@@ -1202,13 +1297,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
 
 
-                await DeleteFile(otherFileInfoRef, otherFullName, context);
+                //await DeleteFile(otherFileInfoRef, otherFullName, context);
 
                 var otherDirName = Path.GetDirectoryName(otherFullName);
                 if (!await Extensions.FSOperation(() => Directory.Exists(Extensions.GetLongPath(otherDirName)), context.Token))
                     await Extensions.FSOperation(() => Directory.CreateDirectory(Extensions.GetLongPath(otherDirName)), context.Token);
 
-                await FileExtensions.WriteAllTextAsync(Extensions.GetLongPath(otherFullName), fileData, context.Token);
+                await FileExtensions.WriteAllTextAsync(Extensions.GetLongPath(otherFullName), fileData, createTempFileFirst: true, cancellationToken: context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
                 BidirectionalConverterSavedFileDates[otherFullName] = now;
@@ -1264,13 +1359,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 }
 
 
-                await DeleteFile(otherFileInfoRef, otherFullName, context);
+                //await DeleteFile(otherFileInfoRef, otherFullName, context);
 
                 var otherDirName = Path.GetDirectoryName(otherFullName);
                 if (!await Extensions.FSOperation(() => Directory.Exists(Extensions.GetLongPath(otherDirName)), context.Token))
                     await Extensions.FSOperation(() => Directory.CreateDirectory(Extensions.GetLongPath(otherDirName)), context.Token);
 
-                await FileExtensions.WriteAllBytesAsync(Extensions.GetLongPath(otherFullName), fileData, context.Token);
+                await FileExtensions.WriteAllBytesAsync(Extensions.GetLongPath(otherFullName), fileData, createTempFileFirst: true, cancellationToken: context.Token);
 
                 var now = DateTime.UtcNow;  //NB! compute now after saving the file
                 BidirectionalConverterSavedFileDates[otherFullName] = now;

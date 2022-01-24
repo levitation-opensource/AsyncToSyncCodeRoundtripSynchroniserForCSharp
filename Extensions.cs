@@ -1,5 +1,5 @@
 ﻿//
-// Copyright (c) Roland Pihlakas 2019 - 2020
+// Copyright (c) Roland Pihlakas 2019 - 2022
 // roland@simplify.ee
 //
 // Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
@@ -75,6 +75,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static string GetLongPath(string path)
         {
+            if (!ConfigParser.IsWindows)
+                return Path.GetFullPath(path);    //GetFullPath: convert relative path to full path
+
+
             //@"\\?\" prefix is needed for reading from long paths: https://stackoverflow.com/questions/44888844/directorynotfoundexception-when-using-long-paths-in-net-4-7 and https://superuser.com/questions/1617012/support-of-the-unc-server-share-syntax-in-windows
 
             if (path.Substring(0, 2) == @"\\")   //network path or path already starting with \\?\
@@ -83,8 +87,18 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
             else
             {
-                return @"\\?\" + path;
+                return @"\\?\" + Path.GetFullPath(path);    //GetFullPath: convert relative path to full path
             }
+        }
+
+        public static string GetDirPathWithTrailingSlash(string dirPath)
+        {
+            if (string.IsNullOrWhiteSpace(dirPath))
+                return dirPath;
+
+            dirPath = Path.Combine(dirPath, ".");    //NB! add "." in order to ensure that slash is appended to the end of the path
+            dirPath = dirPath.Substring(0, dirPath.Length - 1);     //drop the "." again
+            return dirPath;
         }
 
         public static async Task FSOperation(Action func, CancellationToken token)

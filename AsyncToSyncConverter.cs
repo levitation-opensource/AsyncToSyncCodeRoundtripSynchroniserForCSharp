@@ -1,5 +1,5 @@
 ﻿//
-// Copyright (c) Roland Pihlakas 2019 - 2020
+// Copyright (c) Roland Pihlakas 2019 - 2022
 // roland@simplify.ee
 //
 // Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
@@ -125,7 +125,17 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             //using (await Global.FileOperationAsyncLock.LockAsync())
             {
-                var fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
+                string fileData;
+                try
+                { 
+                    fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
+                }
+                catch (FileNotFoundException)   //file was removed by the time queue processing got to it
+                {
+                    return;     
+                }
+
+
                 var originalData = fileData;
 
 

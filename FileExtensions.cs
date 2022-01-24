@@ -51,7 +51,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             if (encoding == null)
                 throw new ArgumentNullException(nameof(encoding));
             if (path.Length == 0)
-                throw new ArgumentException("SR.Argument_EmptyPath: {0}", nameof(path));
+                throw new ArgumentException("Argument_EmptyPath: {0}", nameof(path));
 
             while (true)    //roland
             {
@@ -133,17 +133,21 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             return new StreamWriter(stream, encoding);
         }
 
-        public static Task WriteAllTextAsync(string path, string contents, CancellationToken cancellationToken = default(CancellationToken))
-            => WriteAllTextAsync(path, contents, UTF8NoBOM, cancellationToken);
+        public static Task WriteAllTextAsync(string path, string contents, bool createTempFileFirst, CancellationToken cancellationToken = default(CancellationToken))
+            => WriteAllTextAsync(path, contents, UTF8NoBOM, createTempFileFirst, cancellationToken);
 
-        public static async Task WriteAllTextAsync(string path, string contents, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
+        public static async Task WriteAllTextAsync(string path, string contents, Encoding encoding, bool createTempFileFirst, CancellationToken cancellationToken = default(CancellationToken))
         {
             if (path == null)
                 throw new ArgumentNullException(nameof(path));
             if (encoding == null)
                 throw new ArgumentNullException(nameof(encoding));
             if (path.Length == 0)
-                throw new ArgumentException("SR.Argument_EmptyPath: {0}", nameof(path));
+                throw new ArgumentException("Argument_EmptyPath: {0}", nameof(path));
+
+            var tempPath = path;
+            if (createTempFileFirst)
+                tempPath += ".tmp";
 
             while (true)    //roland
             {
@@ -157,12 +161,28 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                     if (string.IsNullOrEmpty(contents))
                     {
-                        new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read).Dispose();
-                        return; // await Task.CompletedTask;
+                        new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.Read).Dispose();
+                    }
+                    else
+                    { 
+                        await InternalWriteAllTextAsync(AsyncStreamWriter(tempPath, encoding, append: false), contents, cancellationToken);
                     }
 
-                    await InternalWriteAllTextAsync(AsyncStreamWriter(path, encoding, append: false), contents, cancellationToken);
-                    return;
+
+                    if (createTempFileFirst)
+                    {
+                        if (await Extensions.FSOperation(() => File.Exists(path), cancellationToken))
+                        {
+#pragma warning disable SEC0116 //Warning	SEC0116	Unvalidated file paths are passed to a file delete API, which can allow unauthorized file system operations (e.g. read, write, delete) to be performed on unintended server files.
+                            await Extensions.FSOperation(() => File.Delete(path), cancellationToken);
+#pragma warning restore SEC0116
+                        }
+
+                        await Extensions.FSOperation(() => File.Move(tempPath, path), cancellationToken);
+                    }
+
+
+                    return;     //exit while loop
                 }
                 catch (IOException)    //roland
                 {
@@ -212,6 +232,53 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     ArrayPool<char>.Shared.Return(buffer);
                 }
 #endif
+            }
+        }
+
+        public static Task AppendAllTextAsync(string path, string contents, CancellationToken cancellationToken = default(CancellationToken))
+            => AppendAllTextAsync(path, contents, UTF8NoBOM, cancellationToken);
+
+        public static async Task AppendAllTextAsync(string path, string contents, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (path == null)
+                throw new ArgumentNullException(nameof(path));
+            if (encoding == null)
+                throw new ArgumentNullException(nameof(encoding));
+            if (path.Length == 0)
+                throw new ArgumentException("Argument_EmptyPath", nameof(path));
+
+
+
+            while (true)    //roland
+            {
+                try    //roland
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    //if (cancellationToken.IsCancellationRequested)
+                    //{
+                    //    return Task.FromCanceled(cancellationToken);
+                    //}
+
+                    if (string.IsNullOrEmpty(contents))
+                    {
+                        // Just to throw exception if there is a problem opening the file.
+                        new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read).Dispose();
+                        return; // Task.CompletedTask;
+                    }
+
+                    await InternalWriteAllTextAsync(AsyncStreamWriter(path, encoding, append: true), contents, cancellationToken);
+
+                    return;
+                }
+                catch (IOException)    //roland
+                {
+                    //retry after delay
+#if !NOASYNC
+                    await Task.Delay(1000, cancellationToken);     //TODO: config file?
+#else
+                    cancellationToken.WaitHandle.WaitOne(1000);
+#endif
+                }
             }
         }
     }

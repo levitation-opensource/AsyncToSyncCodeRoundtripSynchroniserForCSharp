@@ -1097,7 +1097,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             {
                                 if (newFileIsWatchedFile)
                                 {
-                                    await FileUpdated(newContext);
+                                    using (await FileEventLocks.LockAsync(fse.FileSystemInfo.FullName, token))
+                                    {
+                                        await FileUpdated(newContext);
+                                    }
                                 }
 
                                 if (prevFileIsWatchedFile)
@@ -1118,7 +1121,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                                     }
                                     else
                                     {
-                                        await FileDeleted(previousContext);
+                                        using (await FileEventLocks.LockAsync(prevFileFSE.FileSystemInfo.FullName, token))
+                                        {
+                                            await FileDeleted(previousContext);
+                                        }
                                     }
                                 }
                             }

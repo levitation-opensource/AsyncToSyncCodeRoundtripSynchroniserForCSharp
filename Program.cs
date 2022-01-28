@@ -25,6 +25,7 @@ using myoddweb.directorywatcher;
 using myoddweb.directorywatcher.interfaces;
 using Nito.AspNetBackgroundTasks;
 using Nito.AsyncEx;
+using NReco.Text;
 
 namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
@@ -42,12 +43,17 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static long MaxFileSizeMB = 2048;
 
 
-        public static List<string> WatchedCodeExtension = new List<string>() { "cs", "py" };
-        public static List<string> WatchedResXExtension = new List<string>() { "resx" };
+        public static HashSet<string> WatchedCodeExtension = new HashSet<string>() { "cs", "py" };
+        public static HashSet<string> WatchedResXExtension = new HashSet<string>() { "resx" };
 
-        public static List<string> ExcludedExtensions = new List<string>() { "*~", "tmp" };
-        public static List<string> IgnorePathsStartingWith = new List<string>();
-        public static List<string> IgnorePathsContaining = new List<string>();
+        public static HashSet<string> ExcludedExtensions = new HashSet<string>() { "*~", "tmp" };
+
+        public static List<string> IgnorePathsStartingWithList = new List<string>();
+        public static List<string> IgnorePathsContainingList = new List<string>();
+        public static List<string> IgnorePathsEndingWithList = new List<string>();
+
+        public static bool IgnorePathsContainingACHasAny = false;
+        public static AhoCorasickDoubleArrayTrie<bool> IgnorePathsContainingAC = new AhoCorasickDoubleArrayTrie<bool>();
 
         public static string AsyncPath = "";
         public static string SyncPath = "";
@@ -97,6 +103,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
     internal class Program
     {
+        //let null char mark start and end of a filename
+        //https://stackoverflow.com/questions/54205087/how-can-i-create-a-file-with-null-bytes-in-the-filename
+        //https://stackoverflow.com/questions/1976007/what-characters-are-forbidden-in-windows-and-linux-directory-names
+        //https://serverfault.com/questions/242110/which-common-characters-are-illegal-in-unix-and-windows-filesystems
+        public static readonly string NullChar = new string(new char[] { (char)0 });
+
+        public static readonly string DirectorySeparatorChar = new string(new char[] { Path.DirectorySeparatorChar });
+
+
         private static byte[] GetHash(string inputString)
         {
 #pragma warning disable SCS0006     //Warning	SCS0006	Weak hashing function
@@ -151,14 +166,26 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             Global.AsyncPathMinFreeSpace = fileConfig.GetLong("AsyncPathMinFreeSpace") ?? 0;
             Global.SyncPathMinFreeSpace = fileConfig.GetLong("SyncPathMinFreeSpace") ?? 0;
 
-            Global.WatchedCodeExtension = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "WatchedCodeExtensions", "WatchedCodeExtension");
-            Global.WatchedResXExtension = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "WatchedResXExtensions", "WatchedResXExtension");
+            Global.WatchedCodeExtension = new HashSet<string>(fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "WatchedCodeExtensions", "WatchedCodeExtension"));
+            Global.WatchedResXExtension = new HashSet<string>(fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "WatchedResXExtensions", "WatchedResXExtension"));
 
             //this would need Microsoft.Extensions.Configuration and Microsoft.Extensions.Configuration.Binder packages
-            Global.ExcludedExtensions = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "ExcludedExtensions", "ExcludedExtension");   //NB! UpperOnWindows
+            Global.ExcludedExtensions = new HashSet<string>(fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "ExcludedExtensions", "ExcludedExtension"));   //NB! UpperOnWindows
 
-            Global.IgnorePathsStartingWith = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "IgnorePathsStartingWith", "IgnorePathStartingWith");   //NB! UpperOnWindows
-            Global.IgnorePathsContaining = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "IgnorePathsContaining", "IgnorePathContaining");   //NB! UpperOnWindows
+            Global.IgnorePathsStartingWithList = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "IgnorePathsStartingWith", "IgnorePathStartingWith");   //NB! UpperOnWindows
+            Global.IgnorePathsContainingList = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "IgnorePathsContaining", "IgnorePathContaining");   //NB! UpperOnWindows
+            Global.IgnorePathsEndingWithList = fileConfig.GetListUpperOnWindows(Global.CaseSensitiveFilenames, "IgnorePathsEndingWith", "IgnorePathEndingWith");   //NB! UpperOnWindows
+
+            var ACInput = Global.IgnorePathsStartingWithList.Select(x => new KeyValuePair<string, bool>(NullChar + x, false))
+                .Concat(Global.IgnorePathsContainingList.Select(x => new KeyValuePair<string, bool>(x, false)))
+                .Concat(Global.IgnorePathsEndingWithList.Select(x => new KeyValuePair<string, bool>(x + NullChar, false)))
+                .ToList();
+
+            if (ACInput.Any())  //needed to avoid exceptions
+            {
+                Global.IgnorePathsContainingACHasAny = true;
+                Global.IgnorePathsContainingAC.Build(ACInput);
+            }
 
 
             var pathHashes = "";
@@ -377,10 +404,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         continue;
 
 
-                    var nonFullNameInvariant = ConsoleWatch.GetNonFullName(dirInfo.FullName) + Path.PathSeparator;
+                    var nonFullNameInvariantWithLeadingSlash = DirectorySeparatorChar + Extensions.GetDirPathWithTrailingSlash(ConsoleWatch.GetNonFullName(dirInfo.FullName.ToUpperInvariantOnWindows(Global.CaseSensitiveFilenames)));
                     if (
-                        Global.IgnorePathsStartingWith.Any(x => nonFullNameInvariant.StartsWith(x))
-                        || Global.IgnorePathsContaining.Any(x => nonFullNameInvariant.Contains(x))
+                        //Global.IgnorePathsStartingWith.Any(x => nonFullNameInvariantWithLeadingSlash.StartsWith(x))
+                        //|| Global.IgnorePathsContaining.Any(x => nonFullNameInvariantWithLeadingSlash.Contains(x))
+                        //|| Global.IgnorePathsEndingWith.Any(x => nonFullNameInvariantWithLeadingSlash.EndsWith(x))
+                        Global.IgnorePathsContainingACHasAny  //needed to avoid exceptions
+                        && Global.IgnorePathsContainingAC.ParseText(NullChar + nonFullNameInvariantWithLeadingSlash/* + NullChar*/).Any() //NB! no NullChar appended to end since it is dir path not complete file path
                     )
                     {
                         continue;
@@ -1037,7 +1067,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     || Global.WatchedResXExtension.Contains("*")
                 )
                 &&
-                Global.ExcludedExtensions.All(x =>
+                Global.ExcludedExtensions.All(x =>  //TODO: optimise
 
                     !fullNameInvariant.EndsWith("." + x)
                     &&
@@ -1049,11 +1079,14 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 )
             )
             {
-                var nonFullNameInvariant = GetNonFullName(fullNameInvariant);
+                var nonFullNameInvariantWithLeadingSlash = Program.DirectorySeparatorChar + GetNonFullName(fullNameInvariant);
 
                 if (
-                    Global.IgnorePathsStartingWith.Any(x => nonFullNameInvariant.StartsWith(x))
-                    || Global.IgnorePathsContaining.Any(x => nonFullNameInvariant.Contains(x))
+                    //Global.IgnorePathsStartingWith.Any(x => nonFullNameInvariantWithLeadingSlash.StartsWith(x))
+                    //|| Global.IgnorePathsContaining.Any(x => nonFullNameInvariantWithLeadingSlash.Contains(x))
+                    //|| Global.IgnorePathsEndingWith.Any(x => nonFullNameInvariantWithLeadingSlash.EndsWith(x))
+                    Global.IgnorePathsContainingACHasAny  //needed to avoid exceptions
+                    && Global.IgnorePathsContainingAC.ParseText(Program.NullChar + nonFullNameInvariantWithLeadingSlash + Program.NullChar).Any()
                 )
                 {
                     return false;

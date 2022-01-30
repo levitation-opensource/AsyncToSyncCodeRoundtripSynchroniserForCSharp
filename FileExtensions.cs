@@ -20,6 +20,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
     public static partial class FileExtensions
     {
+        public static long MaxCharArraySize = 0x7FEFFFFF; //https://docs.microsoft.com/en-us/dotnet/framework/configure-apps/file-schema/runtime/gcallowverylargeobjects-element?redirectedfrom=MSDN#remarks
+
         //adapted from https://github.com/dotnet/runtime/blob/5ddc873d9ea6cd4bc6a935fec3057fe89a6932aa/src/libraries/System.IO.FileSystem/src/System/IO/File.cs
 
         //internal const int DefaultBufferSize = 4096;
@@ -41,10 +43,10 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             return new StreamReader(stream, encoding, detectEncodingFromByteOrderMarks: true);
         }
 
-        public static Task<string> ReadAllTextAsync(string path, CancellationToken cancellationToken = default(CancellationToken))
-            => ReadAllTextAsync(path, UTF8NoBOM, cancellationToken);
+        public static Task<string> ReadAllTextAsync(string path, CancellationToken cancellationToken = default(CancellationToken), long maxFileSize = 0, int retryCount = 0)
+            => ReadAllTextAsync(path, UTF8NoBOM, cancellationToken, maxFileSize, retryCount);
 
-        public static async Task<string> ReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken))
+        public static async Task<string> ReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken = default(CancellationToken), long maxFileSize = 0, int retryCount = 0)
         {
             if (path == null)
                 throw new ArgumentNullException(nameof(path));
@@ -53,13 +55,15 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             if (path.Length == 0)
                 throw new ArgumentException("Argument_EmptyPath: {0}", nameof(path));
 
-            while (true)    //roland
+
+            retryCount = Math.Max(0, retryCount);
+            for (int i = -1; i < retryCount; i++)   //roland
             {
                 try    //roland
                 {
                     return cancellationToken.IsCancellationRequested
                         ? await Task.FromCanceled<string>(cancellationToken)
-                        : await InternalReadAllTextAsync(path, encoding, cancellationToken);
+                        : await InternalReadAllTextAsync(path, encoding, cancellationToken, maxFileSize);
                 }
                 catch (Exception ex) when (     //roland
                     ex is IOException
@@ -67,7 +71,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 )
                 {
                     //retry after delay
-                    try
+
+                    if (i + 1 < retryCount)     //do not sleep after last try
                     {
 #if !NOASYNC
                         await Task.Delay(1000, cancellationToken);     //TODO: config file?
@@ -75,16 +80,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                         cancellationToken.WaitHandle.WaitOne(1000);
 #endif
                     }
-                    catch (TaskCanceledException)
-                    {
-                        //do nothing here
-                        return await Task.FromCanceled<string>(cancellationToken);
-                    }
                 }
             }
+
+            return null;
         }
 
-        private static async Task<string> InternalReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken)
+        private static async Task<string> InternalReadAllTextAsync(string path, Encoding encoding, CancellationToken cancellationToken, long maxFileSize = 0)
         {
             Debug.Assert(!string.IsNullOrEmpty(path));
             Debug.Assert(encoding != null);
@@ -94,6 +96,20 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+
+                if (maxFileSize > 0)
+                { 
+                    long len = sr.BaseStream.Length;    //NB! the length might change during the code execution, so need to save it into separate variable
+
+                    maxFileSize = Math.Min(MaxCharArraySize * sizeof(char), maxFileSize);
+                    if (len > maxFileSize)
+                    {
+                        return null;    //TODO: return file size so that error message can report it
+                    }
+                }
+
+
 #if NETSTANDARD
                 buffer = ArrayPool<char>.Shared.Rent(sr.CurrentEncoding.GetMaxCharCount(DefaultBufferSize));
 #else 

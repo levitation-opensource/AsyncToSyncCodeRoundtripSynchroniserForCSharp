@@ -103,7 +103,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 string fileData;
                 try
                 {
-                    fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
+                    long maxFileSize = Global.MaxFileSizeMB * (1024 * 1024);
+                    fileData = await FileExtensions.ReadAllTextAsync(Extensions.GetLongPath(context.Event.FullName), context.Token, maxFileSize: maxFileSize, retryCount: Global.RetryCountOnSrcFileOpenError);
+
+                    if (fileData == null)
+                    {
+                        await ConsoleWatch.AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName}", context);
+                    }
                 }
                 catch (FileNotFoundException)   //file was removed by the time queue processing got to it
                 {

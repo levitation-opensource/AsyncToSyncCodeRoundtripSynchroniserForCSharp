@@ -40,6 +40,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         public static bool UseIdlePriority = false;
         public static bool ShowErrorAlerts = true;
 
+        public static int RetryCountOnSrcFileOpenError = 10;
+
         public static long MaxFileSizeMB = 2048;
 
 
@@ -152,6 +154,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             Global.MaxFileSizeMB = fileConfig.GetLong("MaxFileSizeMB") ?? Global.MaxFileSizeMB;
+            Global.RetryCountOnSrcFileOpenError = (int?)fileConfig.GetLong("RetryCountOnSrcFileOpenError") ?? Global.RetryCountOnSrcFileOpenError;
 
 
             Global.Bidirectional = fileConfig.GetTextUpper("Bidirectional") != "FALSE";   //default is true
@@ -257,7 +260,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     watch.Start();
 
 
-                    var messageContext = new Context(
+                    var initialSyncMessageContext = new Context(
                         eventObj: null,
                         token: Global.CancellationToken.Token,
                         isSyncPath: false,   //unused here
@@ -267,16 +270,16 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                     BackgroundTaskManager.Run(async () =>
                     {
-                        await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", messageContext);
+                        await ConsoleWatch.AddMessage(ConsoleColor.White, "Doing initial synchronisation...", initialSyncMessageContext);
 
-                        await ScanFolders(isInitialScan: true);
+                        await ScanFolders(initialSyncMessageContext: initialSyncMessageContext);
 
                         BackgroundTaskManager.Run(async () =>
                         {
                             await InitialSyncCountdownEvent.WaitAsync(Global.CancellationToken.Token);
 
                             //if (!Global.CancellationToken.IsCancellationRequested)
-                                await ConsoleWatch.AddMessage(ConsoleColor.White, "Done initial synchronisation...", messageContext);
+                                await ConsoleWatch.AddMessage(ConsoleColor.White, "Done initial synchronisation...", initialSyncMessageContext);
                         });
 
                     });     //BackgroundTaskManager.Run(async () =>
@@ -306,27 +309,27 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         private static readonly AsyncCountdownEvent InitialSyncCountdownEvent = new AsyncCountdownEvent(1);
 
-        private static async Task ScanFolders(bool isInitialScan)
+        private static async Task ScanFolders(Context initialSyncMessageContext)
         {
             //1. Do initial synchronisation from sync to async folder   //TODO: config for enabling and ordering of this operation
-            await ScanFolder(Global.SyncPath, "*.*", isInitialScan: isInitialScan);     //NB! use *.* in order to sync resx files also
+            await ScanFolder(Global.SyncPath, "*.*", initialSyncMessageContext: initialSyncMessageContext);     //NB! use *.* in order to sync resx files also
 
             if (Global.Bidirectional)
             {
                 //2. Do initial synchronisation from async to sync folder   //TODO: config for enabling and ordering of this operation
-                await ScanFolder(Global.AsyncPath, "*.*", isInitialScan: isInitialScan);     //NB! use *.* in order to sync resx files also
+                await ScanFolder(Global.AsyncPath, "*.*", initialSyncMessageContext: initialSyncMessageContext);     //NB! use *.* in order to sync resx files also
             }
 
-            if (isInitialScan)
+            if (initialSyncMessageContext?.IsInitialScan == true)
                 InitialSyncCountdownEvent.Signal();
         }
 
-        private static async Task ScanFolder(string path, string extension, bool isInitialScan)
+        private static async Task ScanFolder(string path, string extension, Context initialSyncMessageContext)
         {
-            var fileInfos = ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(path)), extension);
+            var fileInfos = ProcessSubDirs(new DirectoryInfo(Extensions.GetLongPath(path)), extension, initialSyncMessageContext: initialSyncMessageContext);
             await fileInfos.ForEachAsync(fileInfo => 
             {
-                if (isInitialScan)
+                if (initialSyncMessageContext?.IsInitialScan == true)
                     InitialSyncCountdownEvent.AddCount();
 
                 BackgroundTaskManager.Run(async () => 
@@ -335,18 +338,24 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     (
                         new DummyFileSystemEvent(fileInfo),
                         Global.CancellationToken.Token,
-                        isInitialScan
+                        initialSyncMessageContext?.IsInitialScan == true
                     );
 
-                    if (isInitialScan)
+                    if (initialSyncMessageContext?.IsInitialScan == true)
                         InitialSyncCountdownEvent.Signal();
                 });
             });
         }
 
-        private static IAsyncEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, int recursionLevel = 0)
+        private static IAsyncEnumerable<FileInfo> ProcessSubDirs(DirectoryInfo srcDirInfo, string searchPattern, int recursionLevel = 0, Context initialSyncMessageContext = null)
         {
             return new AsyncEnumerable<FileInfo>(async yield => {
+
+#if DEBUG && false
+                if (initialSyncMessageContext?.IsInitialScan == true)
+                    await ConsoleWatch.AddMessage(ConsoleColor.Blue, "Scanning folder " + Extensions.GetLongPath(srcDirInfo.FullName), initialSyncMessageContext);
+#endif
+
 
 #if false //this built-in functio will throw IOException in case some subfolder is an invalid reparse point
                 return new DirectoryInfo(sourceDir)
@@ -417,7 +426,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     }
 
 
-                    var subDirFileInfos = ProcessSubDirs(dirInfo, searchPattern, recursionLevel + 1);
+                    var subDirFileInfos = ProcessSubDirs(dirInfo, searchPattern, recursionLevel + 1, initialSyncMessageContext: initialSyncMessageContext);
                     await subDirFileInfos.ForEachAsync(async subDirFileInfo => 
                     {
                         await yield.ReturnAsync(subDirFileInfo);
@@ -926,10 +935,13 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                             Tuple<byte[], long> fileDataTuple = null;
                             try
                             { 
-                                fileDataTuple = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(context.Event.FullName), context.Token);
+                                fileDataTuple = await FileExtensions.ReadAllBytesAsync(Extensions.GetLongPath(context.Event.FullName), context.Token, retryCount: Global.RetryCountOnSrcFileOpenError);
                                 if (fileDataTuple.Item1 == null)   //maximum length exceeded
                                 {
-                                    await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : fileLength > maxFileSize : {fileDataTuple.Item2} > {maxFileSize}", context);
+                                    if (fileDataTuple.Item2 >= 0)
+                                        await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName} : fileLength > maxFileSize : {fileDataTuple.Item2} > {maxFileSize}", context);
+                                    else
+                                        await AddMessage(ConsoleColor.Red, $"Error synchronising updates from file {context.Event.FullName}", context);
 
                                     return; //TODO: log error?
                                 }                            

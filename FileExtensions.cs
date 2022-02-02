@@ -20,7 +20,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 {
     public static partial class FileExtensions
     {
-        public static long MaxCharArraySize = 0x7FEFFFFF; //https://docs.microsoft.com/en-us/dotnet/framework/configure-apps/file-schema/runtime/gcallowverylargeobjects-element?redirectedfrom=MSDN#remarks
+        public static long MaxStringSize = 0x3FFFFFDF;  //https://stackoverflow.com/questions/140468/what-is-the-maximum-possible-length-of-a-net-string
 
         //adapted from https://github.com/dotnet/runtime/blob/5ddc873d9ea6cd4bc6a935fec3057fe89a6932aa/src/libraries/System.IO.FileSystem/src/System/IO/File.cs
 
@@ -102,7 +102,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 { 
                     long len = sr.BaseStream.Length;    //NB! the length might change during the code execution, so need to save it into separate variable
 
-                    maxFileSize = Math.Min(MaxCharArraySize * sizeof(char), maxFileSize);
+                    maxFileSize = Math.Min(MaxStringSize * sizeof(char), maxFileSize);
                     if (len > maxFileSize)
                     {
                         return null;    //TODO: return file size so that error message can report it

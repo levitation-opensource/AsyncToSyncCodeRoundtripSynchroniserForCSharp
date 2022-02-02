@@ -39,6 +39,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
         public static bool UseIdlePriority = false;
         public static bool ShowErrorAlerts = true;
+        public static bool LogInitialScan = false;
 
         public static int RetryCountOnSrcFileOpenError = 10;
 
@@ -151,6 +152,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             Global.UseIdlePriority = fileConfig.GetTextUpper("UseIdlePriority") == "TRUE";   //default is false
             Global.ShowErrorAlerts = fileConfig.GetTextUpper("ShowErrorAlerts") != "FALSE";   //default is true
+            Global.LogInitialScan = fileConfig.GetTextUpper("LogInitialScan") == "TRUE";   //default is false
 
 
             Global.MaxFileSizeMB = fileConfig.GetLong("MaxFileSizeMB") ?? Global.MaxFileSizeMB;
@@ -351,10 +353,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             return new AsyncEnumerable<FileInfo>(async yield => {
 
-#if DEBUG && false
-                if (initialSyncMessageContext?.IsInitialScan == true)
+
+                if (Global.LogInitialScan && initialSyncMessageContext?.IsInitialScan == true)
                     await ConsoleWatch.AddMessage(ConsoleColor.Blue, "Scanning folder " + Extensions.GetLongPath(srcDirInfo.FullName), initialSyncMessageContext);
-#endif
 
 
 #if false //this built-in functio will throw IOException in case some subfolder is an invalid reparse point

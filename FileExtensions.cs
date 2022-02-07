@@ -5,7 +5,6 @@
 //
 
 #define ASYNC
-#define MS_IO_REDIST
 using System;
 #if NETSTANDARD
 using System.Buffers;
@@ -57,7 +56,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             retryCount = Math.Max(0, retryCount);
-            for (int i = -1; i < retryCount; i++)   //roland
+            for (int tryIndex = -1; tryIndex < retryCount; tryIndex++)   //roland
             {
                 try    //roland
                 {
@@ -72,7 +71,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 {
                     //retry after delay
 
-                    if (i + 1 < retryCount)     //do not sleep after last try
+                    if (tryIndex + 1 < retryCount)     //do not sleep after last try
                     {
 #if !NOASYNC
                         await Task.Delay(1000, cancellationToken);     //TODO: config file?
@@ -118,11 +117,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 StringBuilder sb = new StringBuilder();
                 while (true)
                 {
-#if MS_IO_REDIST
                     int read = await sr.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
-#else
-                    int read = await sr.ReadAsync(new Memory<char>(buffer), cancellationToken).ConfigureAwait(false);
-#endif
                     if (read == 0)
                     {
                         return sb.ToString();
@@ -226,21 +221,17 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 buffer = new char[DefaultBufferSize];
 #endif
                 int count = contents.Length;
-                int index = 0;
-                while (index < count)
+                int sourceOffset = 0;
+                while (sourceOffset < count)
                 {
-                    int batchSize = Math.Min(DefaultBufferSize, count - index);
-                    contents.CopyTo(index, buffer, 0, batchSize);
-#if MS_IO_REDIST
-                    await sw.WriteAsync(buffer, 0, batchSize).ConfigureAwait(false);
-#else
-                    await sw.WriteAsync(new ReadOnlyMemory<char>(buffer, 0, batchSize), cancellationToken).ConfigureAwait(false);
-#endif
-                    index += batchSize;
+                    int batchSize = Math.Min(DefaultBufferSize, count - sourceOffset);
+                    contents.CopyTo(sourceOffset, buffer, 0, batchSize);
+                    await sw.WriteAsync(buffer, 0, batchSize);
+                    sourceOffset += batchSize;
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                await sw.FlushAsync().ConfigureAwait(false);
+                await sw.FlushAsync();
             }
             finally
             {

@@ -484,9 +484,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             message.AppendLine("");
 
-            await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), Global.CancellationToken.Token);
 
-
+            using (await ConsoleWatch.Lock.LockAsync(Global.CancellationToken.Token))
+            {
+                await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), Global.CancellationToken.Token);
+            }
+            
 
             //Console.WriteLine(ex.Message);
             message.Clear();     //TODO: refactor to shared function
@@ -501,7 +504,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             var time = DateTime.Now;
-            var msg = $"[{time:yyyy.MM.dd HH:mm:ss.ffff}]:{message}";
+            var msg = $"[{time:yyyy.MM.dd HH:mm:ss.ffff}] : {message}";
             await AddMessage(ConsoleColor.Red, msg, time, showAlert: true);
         }
 
@@ -509,8 +512,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             //await Task.Run(() => 
             {
-                //NB! using synchronous lock here since the MessageBox.Show and Console.WriteLine are synchronous
-                lock (ConsoleWatch.Lock)
+                using (await ConsoleWatch.Lock.LockAsync(Global.CancellationToken.Token))
                 {
                     try
                     {
@@ -616,7 +618,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         /// <summary>
         /// We need a static lock so it is shared by all.
         /// </summary>
-        internal static readonly object Lock = new object();
+        internal static readonly AsyncLock Lock = new AsyncLock();
 
         internal static DateTime PrevAlertTime;
         internal static string PrevAlertMessage;
@@ -703,8 +705,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             message.AppendLine("");
 
-            await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), context.Token);
 
+            using (await ConsoleWatch.Lock.LockAsync(context.Token))
+            {
+                await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), context.Token);
+            }
 
 
             //Console.WriteLine(ex.Message);
@@ -1289,8 +1294,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
         {
             //await Task.Run(() =>
             {
-                //NB! using synchronous lock here since the MessageBox.Show and Console.WriteLine are synchronous
-                lock (Lock)
+                using (await ConsoleWatch.Lock.LockAsync(context.Token))
                 {
                     try
                     {

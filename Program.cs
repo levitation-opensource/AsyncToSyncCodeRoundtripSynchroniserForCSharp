@@ -38,8 +38,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
         public static bool UseIdlePriority = false;
+
         public static bool ShowErrorAlerts = true;
         public static bool LogInitialScan = false;
+        public static bool LogToFile = false;
+        public static bool AddTimestampToNormalLogEntries = true;
 
         public static int RetryCountOnSrcFileOpenError = 10;
 
@@ -151,8 +154,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             Global.UseIdlePriority = fileConfig.GetTextUpper("UseIdlePriority") == "TRUE";   //default is false
+
+            
             Global.ShowErrorAlerts = fileConfig.GetTextUpper("ShowErrorAlerts") != "FALSE";   //default is true
             Global.LogInitialScan = fileConfig.GetTextUpper("LogInitialScan") == "TRUE";   //default is false
+            Global.LogToFile = fileConfig.GetTextUpper("LogToFile") == "TRUE";   //default is false
+            Global.AddTimestampToNormalLogEntries = fileConfig.GetTextUpper("AddTimestampToNormalLogEntries") != "FALSE";   //default is true
 
 
             Global.MaxFileSizeMB = fileConfig.GetLong("MaxFileSizeMB") ?? Global.MaxFileSizeMB;
@@ -487,7 +494,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             using (await ConsoleWatch.Lock.LockAsync(Global.CancellationToken.Token))
             {
-                await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), Global.CancellationToken.Token);
+                await FileExtensions.AppendAllTextAsync
+                (
+                    "UnhandledExceptions.log",
+                    message.ToString(),
+                    Global.CancellationToken.Token
+                );
             }
             
 
@@ -504,16 +516,33 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             var time = DateTime.Now;
-            var msg = $"[{time:yyyy.MM.dd HH:mm:ss.ffff}] : {message}";
-            await AddMessage(ConsoleColor.Red, msg, time, showAlert: true);
+            var msg = message.ToString();
+            await AddMessage(ConsoleColor.Red, msg, time, showAlert: true, addTimestamp: true);
         }
 
-        private static async Task AddMessage(ConsoleColor color, string message, DateTime time, bool showAlert = false)
+        private static async Task AddMessage(ConsoleColor color, string message, DateTime time, bool showAlert = false, bool addTimestamp = false, CancellationToken? token = null, bool suppressLogFile = false)
         {
+            if (addTimestamp || Global.AddTimestampToNormalLogEntries)
+            {
+                message = $"[{time:yyyy.MM.dd HH:mm:ss.ffff}] : {message}";
+            }
+
+
             //await Task.Run(() => 
             {
                 using (await ConsoleWatch.Lock.LockAsync(Global.CancellationToken.Token))
                 {
+                    if (Global.LogToFile && !suppressLogFile)
+                    {
+                        await FileExtensions.AppendAllTextAsync
+                        (
+                            "Console.log",
+                            message,
+                            token ?? Global.CancellationToken.Token
+                        );
+                    }
+
+
                     try
                     {
                         Console.ForegroundColor = color;
@@ -708,7 +737,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
             using (await ConsoleWatch.Lock.LockAsync(context.Token))
             {
-                await FileExtensions.AppendAllTextAsync("UnhandledExceptions.log", message.ToString(), context.Token);
+                await FileExtensions.AppendAllTextAsync
+                (
+                    "UnhandledExceptions.log",
+                    message.ToString(),
+                    context.Token
+                );
             }
 
 
@@ -724,8 +758,8 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
 
 
-            var msg = $"[{context.Time.ToLocalTime():yyyy.MM.dd HH:mm:ss.ffff}] : {context.Event?.FullName} : {message}";
-            await AddMessage(ConsoleColor.Red, msg, context, showAlert: true);
+            var msg = $"{context.Event?.FullName} : {message}";
+            await AddMessage(ConsoleColor.Red, msg, context, showAlert: true, addTimestamp: true);
         }
 
         public static bool IsAsyncPath(string fullNameInvariant)
@@ -1290,12 +1324,30 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
             }
         }
 
-        public static async Task AddMessage(ConsoleColor color, string message, Context context, bool showAlert = false)
+        public static async Task AddMessage(ConsoleColor color, string message, Context context, bool showAlert = false, bool addTimestamp = false)
         {
+            if (addTimestamp || Global.AddTimestampToNormalLogEntries)
+            {
+                var time = context.Time.ToLocalTime();
+                message = $"[{time:yyyy.MM.dd HH:mm:ss.ffff}] : {message}";
+            }
+
+
             //await Task.Run(() =>
             {
                 using (await ConsoleWatch.Lock.LockAsync(context.Token))
                 {
+                    if (Global.LogToFile)
+                    {
+                        await FileExtensions.AppendAllTextAsync
+                        (
+                            "Console.log",
+                            message,
+                            context.Token
+                        );
+                    }
+
+
                     try
                     {
                         Console.ForegroundColor = color;

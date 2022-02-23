@@ -117,7 +117,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 StringBuilder sb = new StringBuilder();
                 while (true)
                 {
-                    int read = await sr.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                    int read = await sr.ReadAsync(buffer, 0, buffer.Length);  //TODO: add cancellationToken here?
                     if (read == 0)
                     {
                         return sb.ToString();
@@ -226,12 +226,12 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                 {
                     int batchSize = Math.Min(DefaultBufferSize, count - sourceOffset);
                     contents.CopyTo(sourceOffset, buffer, 0, batchSize);
-                    await sw.WriteAsync(buffer, 0, batchSize);
+                    await sw.WriteAsync(buffer, 0, batchSize);  //TODO: add cancellationToken here?
                     sourceOffset += batchSize;
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                await sw.FlushAsync();
+                await sw.FlushAsync();  //TODO: add cancellationToken here?
             }
             finally
             {

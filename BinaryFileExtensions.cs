@@ -127,6 +127,11 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
                             await stream.WriteAsync(contents, i, writeBufferLength, cancellationToken);
                         }
+
+                        //make the flush operation explicit so it can be async
+                        //This is a use case for IAsyncDisposable as proposed in async streams, a candidate feature for C# 8.0, combined with a using statement enhancement that that proposal didn't cover. C# 7.x and below don't have a "nice" way to do asynchronous dispose, so the implicit Dispose() call from your using statement does the flush synchronously. The workaround is directly calling and awaiting on FlushAsync() so that the synchronous Dispose() doesn't have to synchronously flush.
+                        //https://stackoverflow.com/questions/21987533/streamwriter-uses-synchronous-invocation-when-calling-asynchronous-methods
+                        await stream.FlushAsync(cancellationToken); 
                     }
 
                     if (createTempFileFirst)

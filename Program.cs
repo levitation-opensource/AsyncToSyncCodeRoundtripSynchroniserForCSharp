@@ -38,6 +38,7 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
         public static bool UseIdlePriority = false;
+        public static List<long> Affinity = new List<long>();
 
         public static bool ShowErrorAlerts = true;
         public static bool LogInitialScan = false;
@@ -154,8 +155,9 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
 
 
             Global.UseIdlePriority = fileConfig.GetTextUpper("UseIdlePriority") == "TRUE";   //default is false
+            Global.Affinity = fileConfig.GetLongList("Affinity");
 
-            
+
             Global.ShowErrorAlerts = fileConfig.GetTextUpper("ShowErrorAlerts") != "FALSE";   //default is true
             Global.LogInitialScan = fileConfig.GetTextUpper("LogInitialScan") == "TRUE";   //default is false
             Global.LogToFile = fileConfig.GetTextUpper("LogToFile") == "TRUE";   //default is false
@@ -242,6 +244,29 @@ namespace AsyncToSyncCodeRoundtripSynchroniserMonitor
                     catch (Exception)
                     {
                         Console.WriteLine("Unable to set idle priority.");
+                    }
+                }
+
+                if (Global.Affinity.Count > 0)
+                {
+                    try
+                    {
+                        var CurrentProcess = Process.GetCurrentProcess();
+
+                        long affinityMask = 0;
+                        foreach (var affinityEntry in Global.Affinity)
+                        {
+                            if (affinityEntry < 0 || affinityEntry > 63)
+                                throw new ArgumentException("Affinity");
+
+                            affinityMask |= (long)1 << (int)affinityEntry;
+                        }
+
+                        CurrentProcess.ProcessorAffinity = new IntPtr(affinityMask);
+                    }
+                    catch (Exception)
+                    {
+                        Console.WriteLine("Unable to set affinity.");
                     }
                 }
 
